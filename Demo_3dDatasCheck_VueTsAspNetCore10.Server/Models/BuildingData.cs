@@ -32,6 +32,16 @@
         /// 解析後的3D坐標
         /// </summary>
         public List<List<List<double>>> Coordinates { get; set; } = new();
+
+        /// <summary>
+        /// 建物部位最低高度（公尺）
+        /// </summary>
+        public double? MinHeight { get; set; }
+
+        /// <summary>
+        /// 建物部位最高高度（公尺）
+        /// </summary>
+        public double? MaxHeight { get; set; }
         #endregion
 
         #region -- 異常狀態記錄
@@ -51,6 +61,11 @@
         /// 修正訊息列表
         /// </summary>
         public List<string> FixMessages { get; set; } = new();
+
+        /// <summary>
+        /// 是否疑似浮空（樓層斷層或離地過高）
+        /// </summary>
+        public bool IsFloating { get; set; } = false;
         #endregion
 
     }//class end

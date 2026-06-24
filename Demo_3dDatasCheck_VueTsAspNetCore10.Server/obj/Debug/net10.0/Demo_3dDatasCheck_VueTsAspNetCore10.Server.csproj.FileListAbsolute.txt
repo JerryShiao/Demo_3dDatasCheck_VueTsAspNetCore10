@@ -36,3 +36,4 @@ D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore1
 D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.genruntimeconfig.cache
 D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\ref\Demo_3dDatasCheck_VueTsAspNetCore10.Server.dll
 D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\bin\Debug\net10.0\dotnet-tools.json
+D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\staticwebassets.upToDateCheck.txt

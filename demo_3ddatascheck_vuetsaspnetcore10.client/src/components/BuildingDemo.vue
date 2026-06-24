@@ -36,7 +36,8 @@
                 <td>{{ b.buildingNo }}</td>
                 <td>{{ b.floor }}</td>
                 <td>
-                  <span v-if="b.isValid && !b.isFixed" class="badge success">正常</span>
+                  <span v-if="b.isFloating" class="badge danger" :title="b.errorMessages.join(', ')">浮空</span>
+                  <span v-else-if="b.isValid && !b.isFixed" class="badge success">正常</span>
                   <span v-else-if="b.isFixed" class="badge warning" :title="b.fixMessages.join(', ')">已修復</span>
                   <span v-else class="badge danger" :title="b.errorMessages.join(', ')">錯誤</span>
                 </td>
@@ -70,12 +71,27 @@
   const buildings = ref<BuildingPart[]>([]); // 建物物件列表
   let viewer: Cesium.Viewer | null = null;   // Cesium Viewer 實例
 
+  const GROUND_FLOAT_TOLERANCE = 3.0; // 底部離地面超過此值（公尺）視為浮空
+
   //【生命週期】===================================================================
   // 在組件掛載後執行
   onMounted(async () => {
-    // 初始化 3D 地球視窗
+    const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN;
+    if (ionToken) {
+      Cesium.Ion.defaultAccessToken = ionToken;
+    }
+
+    let terrainProvider: Cesium.TerrainProvider | undefined;
+    try {
+      if (ionToken) {
+        terrainProvider = await Cesium.createWorldTerrainAsync();
+      }
+    } catch (error) {
+      console.warn('無法載入 Cesium World Terrain，將使用橢球地形進行浮空檢測', error);
+    }
+
     viewer = new Cesium.Viewer('cesiumContainer', {
-      // 不傳 terrainProvider，使用預設 EllipsoidTerrainProvider
+      terrainProvider,
       animation: false,
       timeline: false,
       infoBox: true
@@ -128,49 +144,152 @@
     return flatCoords;
   };
 
-  // 呼叫 API 處理後端資料並上圖
-  const loadDataToMap = (data: BuildingPart[]) => {
+  const getBuildingMinHeight = (b: BuildingPart) => {
+    if (b.minHeight != null && Number.isFinite(b.minHeight))
+      return b.minHeight;
+
+    let minZ = Infinity;
+    b.coordinates?.forEach(polygon => {
+      polygon.forEach(pt => {
+        if (pt.length >= 3 && Number.isFinite(pt[2]))
+          minZ = Math.min(minZ, pt[2]!);
+      });
+    });
+    return Number.isFinite(minZ) ? minZ : null;
+  };
+
+  const getBuildingCentroid = (b: BuildingPart) => {
+    let sumLon = 0;
+    let sumLat = 0;
+    let count = 0;
+
+    b.coordinates?.forEach(polygon => {
+      polygon.forEach(pt => {
+        if (pt.length < 2) return;
+        if (!Number.isFinite(pt[0]) || !Number.isFinite(pt[1])) return;
+        sumLon += pt[0]!;
+        sumLat += pt[1]!;
+        count++;
+      });
+    });
+
+    if (count === 0) return null;
+    return { lon: sumLon / count, lat: sumLat / count };
+  };
+
+  const markTerrainFloating = (b: BuildingPart, minZ: number, groundZ: number) => {
+    const gap = minZ - groundZ;
+    const message = `疑似浮空（底部 ${minZ.toFixed(1)}m，地面 ${groundZ.toFixed(1)}m，落差 ${gap.toFixed(1)}m）`;
+    if (b.errorMessages.includes(message)) return;
+
+    b.isFloating = true;
+    b.isValid = false;
+    b.errorMessages.push(message);
+  };
+
+  // 前端：依地形高度補充浮空檢測（方案 C）
+  const detectTerrainFloating = async (items: BuildingPart[]) => {
+    if (!viewer) return;
+
+    const samples: Cesium.Cartographic[] = [];
+    const targetBuildings: BuildingPart[] = [];
+
+    items.forEach(b => {
+      if (b.isFloating || !b.coordinates?.length) return;
+
+      const minZ = getBuildingMinHeight(b);
+      const centroid = getBuildingCentroid(b);
+      if (minZ == null || !centroid) return;
+
+      samples.push(Cesium.Cartographic.fromDegrees(centroid.lon, centroid.lat));
+      targetBuildings.push(b);
+    });
+
+    if (samples.length === 0) return;
+
     try {
+      const updated = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, samples);
+      updated.forEach((pos, index) => {
+        const b = targetBuildings[index]!;
+        const minZ = getBuildingMinHeight(b);
+        if (minZ == null) return;
 
-      buildings.value = data.map(b => ({ ...b, rowId: crypto.randomUUID() }));
-      if (!viewer) return;
+        const groundZ = pos.height ?? 0;
+        if (minZ - groundZ > GROUND_FLOAT_TOLERANCE) {
+          markTerrainFloating(b, minZ, groundZ);
+        }
+      });
+    } catch (error) {
+      console.warn('地形高度取樣失敗，略過前端浮空檢測', error);
+    }
+  };
 
-      viewer.entities.removeAll(); // 清空舊建物
+  const renderBuildingsOnMap = () => {
+    if (!viewer) return;
 
-      buildings.value.forEach(b => {
-        // 如果連坐標都沒解析出來，則無法渲染
-        if (!b.coordinates || b.coordinates.length === 0) return;
+    viewer.entities.removeAll();
 
-        b.coordinates.forEach((polygonCoords) => {
-          const flatCoords = buildFlatCoords(polygonCoords);
-          if (!flatCoords) return;
+    buildings.value.forEach(b => {
+      if (!b.coordinates || b.coordinates.length === 0) return;
 
-          // 設定不同品質狀態的顏色
-          let color = Cesium.Color.BLUE.withAlpha(0.7); // 預設正常
-          if (!b.isValid && !b.isFixed) color = Cesium.Color.RED.withAlpha(0.7); // 錯誤且未修復
-          if (b.isFixed) color = Cesium.Color.ORANGE.withAlpha(0.7); // 已修復
+      b.coordinates.forEach((polygonCoords) => {
+        const flatCoords = buildFlatCoords(polygonCoords);
+        if (!flatCoords) return;
 
-          // boundedBy 已是 3D 立面，直接依各頂點高度繪製，不做 extrude
-          viewer!.entities.add({
-            id: crypto.randomUUID(),
-            name: `建號: ${b.buildingNo} (${b.floor}F)`,
-            description: `
+        const isFloating = b.isFloating;
+        let color = Cesium.Color.BLUE.withAlpha(0.7);
+        let outlineColor = Cesium.Color.BLACK;
+        let outlineWidth = 1;
+
+        if (isFloating) {
+          color = Cesium.Color.TRANSPARENT;
+          outlineColor = Cesium.Color.RED;
+          outlineWidth = 3;
+        } else if (!b.isValid && !b.isFixed) {
+          color = Cesium.Color.RED.withAlpha(0.7);
+        } else if (b.isFixed) {
+          color = Cesium.Color.ORANGE.withAlpha(0.7);
+        }
+
+        viewer!.entities.add({
+          id: crypto.randomUUID(),
+          name: `建號: ${b.buildingNo} (${b.floor}F)`,
+          description: `
             <p><b>MID:</b> ${b.mid}</p>
+            <p><b>高度範圍:</b> ${b.minHeight ?? '-'} ~ ${b.maxHeight ?? '-'} m</p>
+            <p><b>浮空狀態:</b> ${b.isFloating ? '是' : '否'}</p>
             <p><b>異常資訊:</b> ${b.errorMessages.join(', ') || '無'}</p>
             <p><b>修復紀錄:</b> ${b.fixMessages.join(', ') || '無'}</p>
           `,
-            polygon: {
-              hierarchy: Cesium.Cartesian3.fromDegreesArrayHeights(flatCoords),
-              perPositionHeight: true,
-              material: color,
-              outline: true,
-              outlineColor: Cesium.Color.BLACK
-            }
-          });
+          polygon: {
+            hierarchy: Cesium.Cartesian3.fromDegreesArrayHeights(flatCoords),
+            perPositionHeight: true,
+            material: color,
+            outline: true,
+            outlineColor,
+            outlineWidth,
+          }
         });
       });
+    });
+  };
 
-      // 視角自動拉到第一棟建物
+  // 呼叫 API 處理後端資料並上圖
+  const loadDataToMap = async (data: BuildingPart[]) => {
+    try {
+      buildings.value = data.map(b => ({
+        ...b,
+        rowId: crypto.randomUUID(),
+        isFloating: b.isFloating ?? false,
+        errorMessages: [...(b.errorMessages ?? [])],
+        fixMessages: [...(b.fixMessages ?? [])],
+      }));
+
+      if (!viewer) return;
+
+      await detectTerrainFloating(buildings.value);
+      renderBuildingsOnMap();
+
       const first = buildings.value[0];
       if (first && first.coordinates && first.coordinates.length > 0) {
         flyToBuilding(first);
