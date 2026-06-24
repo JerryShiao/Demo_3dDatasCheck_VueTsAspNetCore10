@@ -63,10 +63,10 @@ const apiUrl = ref('');
 const buildings = ref<BuildingPart[]>([]);
 let viewer: Cesium.Viewer | null = null;
 
-onMounted(() => {
+  onMounted(async () => {
   // 初始化 3D 地球視窗
   viewer = new Cesium.Viewer('cesiumContainer', {
-    terrainProvider: Cesium.createWorldTerrain(), // 啟用地形
+    // 不傳 terrainProvider，使用預設 EllipsoidTerrainProvider
     animation: false,
     timeline: false,
     infoBox: true
@@ -75,7 +75,7 @@ onMounted(() => {
 
 // 呼叫 API 處理後端資料並上圖
 const loadDataToMap = (data: BuildingPart[]) => {
-  buildings.ref = data;
+  buildings.value = data;
   if (!viewer) return;
 
   viewer.entities.removeAll(); // 清空舊建物
@@ -127,8 +127,9 @@ const loadDataToMap = (data: BuildingPart[]) => {
   });
 
   // 視角自動拉到第一棟建物
-  if (data.length > 0 && data[0].coordinates?.length > 0) {
-    flyToBuilding(data[0]);
+  const first = data[0];
+  if (first && first.coordinates && first.coordinates.length > 0) {
+    flyToBuilding(first);
   }
 };
 
@@ -143,7 +144,7 @@ const handleFileUpload = async (event: Event) => {
   formData.append('file', file);
 
   try {
-    const res = await axios.post<BuildingPart[]>('http://localhost:5000/api/building/import-file', formData);
+    const res = await axios.post('/api/building/import-file', formData);
     loadDataToMap(res.data);
   } catch (err) {
     alert('檔案解析失敗！');

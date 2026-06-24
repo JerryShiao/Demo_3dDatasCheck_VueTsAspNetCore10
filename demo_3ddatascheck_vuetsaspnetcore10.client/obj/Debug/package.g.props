@@ -30,6 +30,7 @@
     <PackageJsonDevdependenciesOxlint Condition="$(PackageJsonDevdependenciesOxlint) == ''">~1.69.0</PackageJsonDevdependenciesOxlint>
     <PackageJsonDevdependenciesTypescript Condition="$(PackageJsonDevdependenciesTypescript) == ''">~6.0.0</PackageJsonDevdependenciesTypescript>
     <PackageJsonDevdependenciesVite Condition="$(PackageJsonDevdependenciesVite) == ''">^8.0.16</PackageJsonDevdependenciesVite>
+    <PackageJsonDevdependenciesVitePluginCesium Condition="$(PackageJsonDevdependenciesVitePluginCesium) == ''">^1.2.23</PackageJsonDevdependenciesVitePluginCesium>
     <PackageJsonDevdependenciesVitePluginVueDevtools Condition="$(PackageJsonDevdependenciesVitePluginVueDevtools) == ''">^8.1.2</PackageJsonDevdependenciesVitePluginVueDevtools>
     <PackageJsonDevdependenciesVueEslintParser Condition="$(PackageJsonDevdependenciesVueEslintParser) == ''">^10.4.1</PackageJsonDevdependenciesVueEslintParser>
     <PackageJsonDevdependenciesVueTsc Condition="$(PackageJsonDevdependenciesVueTsc) == ''">^3.3.5</PackageJsonDevdependenciesVueTsc>
