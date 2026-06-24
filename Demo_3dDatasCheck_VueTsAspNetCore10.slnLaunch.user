@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "新增設定檔",
+    "Projects": [
+      {
+        "Path": "Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "demo_3ddatascheck_vuetsaspnetcore10.client\\demo_3ddatascheck_vuetsaspnetcore10.client.esproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

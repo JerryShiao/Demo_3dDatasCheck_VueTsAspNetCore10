@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="demo_3ddatascheck_vuetsaspnetcore10.client/demo_3ddatascheck_vuetsaspnetcore10.client.esproj">
+    <Build />
+    <Deploy />
+  </Project>
+  <Project Path="Demo_3dDatasCheck_VueTsAspNetCore10.Server/Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj" />
+</Solution>
