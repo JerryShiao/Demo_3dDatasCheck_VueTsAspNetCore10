@@ -80,6 +80,30 @@
       timeline: false,
       infoBox: true
     });
+
+    const controller = viewer.scene.screenSpaceCameraController;
+
+    // 左鍵：旋轉
+    controller.rotateEventTypes = Cesium.CameraEventType.LEFT_DRAG;
+
+    // 右鍵 / 中鍵：傾斜
+    controller.tiltEventTypes = [
+      Cesium.CameraEventType.MIDDLE_DRAG,
+      Cesium.CameraEventType.RIGHT_DRAG,
+    ];
+
+    // 滾輪 / 雙指：縮放
+    controller.zoomEventTypes = [
+      Cesium.CameraEventType.WHEEL,
+      Cesium.CameraEventType.PINCH,
+    ];
+
+    controller.enableRotate = true;
+    controller.enableTilt = true;
+    controller.enableZoom = true;
+    controller.enableTranslate = true;
+
+    viewer.canvas.oncontextmenu = (e) => e.preventDefault();
   });
 
   //【方法】=====================================================================
