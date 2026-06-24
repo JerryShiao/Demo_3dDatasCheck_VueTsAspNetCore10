@@ -11,6 +11,7 @@ export interface BuildingPart {
   errorMessages: string[];
   isFixed: boolean;
   fixMessages: string[];
+  rowId?: string; // 前端載入時產生的唯一識別，供 Vue :key 使用
 }
 
 type Coordinate3D = [number, number, number];

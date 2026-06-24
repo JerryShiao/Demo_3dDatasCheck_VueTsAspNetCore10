@@ -1,3 +1,5 @@
+<!--主頁面-->
+
 <template>
   <div class="demo-container">
     <div class="control-panel">
@@ -29,7 +31,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="b in buildings" :key="b.mid" @click="flyToBuilding(b)" class="clickable-row">
+              <tr v-for="b in buildings" :key="b.rowId" @click="flyToBuilding(b)" class="clickable-row">
                 <td>{{ b.mid }}</td>
                 <td>{{ b.buildingNo }}</td>
                 <td>{{ b.floor }}</td>
@@ -50,129 +52,164 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import axios from 'axios';
-import * as Cesium from 'cesium';
-import 'cesium/Source/Widgets/widgets.css';
-import type { BuildingPart } from '../types/BuildingPart.ts';
+  //【引入】=====================================================================
+  import {
+    ref,      // 響應式變數
+    onMounted // 組件掛載後執行
+  } from 'vue';
+  import axios from 'axios';                                    // HTTP 請求庫
+  import * as Cesium from 'cesium';                             // Cesium 3D 地圖庫
+  import 'cesium/Source/Widgets/widgets.css';                   // Cesium 預設樣式
+  import type { BuildingPart } from '../types/BuildingPart.ts'; // 建物物件類型定義
 
-// Cesium 需要設定靜態資源路徑 (通常在 vite.config 中設定，這裡手動指定公用庫)
-// window.CESIUM_BASE_URL = '/node_modules/cesium/Build/Cesium/';
+  // 套件
+  import Swal from 'sweetalert2';
 
-const apiUrl = ref('');
-const buildings = ref<BuildingPart[]>([]);
-let viewer: Cesium.Viewer | null = null;
+  //【宣告】=====================================================================
+  const apiUrl = ref('');                    // API URL 輸入框綁定
+  const buildings = ref<BuildingPart[]>([]); // 建物物件列表
+  let viewer: Cesium.Viewer | null = null;   // Cesium Viewer 實例
 
+  //【生命週期】===================================================================
+  // 在組件掛載後執行
   onMounted(async () => {
-  // 初始化 3D 地球視窗
-  viewer = new Cesium.Viewer('cesiumContainer', {
-    // 不傳 terrainProvider，使用預設 EllipsoidTerrainProvider
-    animation: false,
-    timeline: false,
-    infoBox: true
-  });
-});
-
-// 呼叫 API 處理後端資料並上圖
-const loadDataToMap = (data: BuildingPart[]) => {
-  buildings.value = data;
-  if (!viewer) return;
-
-  viewer.entities.removeAll(); // 清空舊建物
-
-  data.forEach(b => {
-    // 如果連坐標都沒解析出來，則無法渲染
-    if (!b.coordinates || b.coordinates.length === 0) return;
-
-    b.coordinates.forEach((polygonCoords, index) => {
-      // 轉換為 Cesium 專用的 3D 笛卡爾坐標格式 [lon, lat, alt, lon, lat, alt...]
-      const flatCoords: number[] = [];
-      let minHeight = 9999;
-      let maxHeight = -9999;
-
-      polygonCoords.forEach(pt => {
-        if (pt.length < 3) return;
-        const lon = pt[0]!;
-        const lat = pt[1]!;
-        const alt = pt[2]!;
-        flatCoords.push(lon, lat, alt);
-        if (alt < minHeight) minHeight = alt;
-        if (alt > maxHeight) maxHeight = alt;
-      });
-
-      // 設定不同品質狀態的顏色
-      let color = Cesium.Color.BLUE.withAlpha(0.7); // 預設正常
-      if (!b.isValid && !b.isFixed) color = Cesium.Color.RED.withAlpha(0.7); // 錯誤且未修復
-      if (b.isFixed) color = Cesium.Color.ORANGE.withAlpha(0.7); // 已修復
-
-      // 在 3D 地圖上繪製建築外殼（Extruded Polygon）
-      viewer!.entities.add({
-        id: `${b.mid}-${index}`,
-        name: `建號: ${b.buildingNo} (${b.floor}F)`,
-        description: `
-          <p><b>MID:</b> ${b.mid}</p>
-          <p><b>異常資訊:</b> ${b.errorMessages.join(', ') || '無'}</p>
-          <p><b>修復紀錄:</b> ${b.fixMessages.join(', ') || '無'}</p>
-        `,
-        polygon: {
-          hierarchy: Cesium.Cartesian3.fromDegreesArrayHeights(flatCoords),
-          extrudedHeight: maxHeight, // 頂部高度
-          perPositionHeight: true,  // 依照各點實際高度繪製
-          material: color,
-          outline: true,
-          outlineColor: Cesium.Color.BLACK
-        }
-      });
+    // 初始化 3D 地球視窗
+    viewer = new Cesium.Viewer('cesiumContainer', {
+      // 不傳 terrainProvider，使用預設 EllipsoidTerrainProvider
+      animation: false,
+      timeline: false,
+      infoBox: true
     });
   });
 
-  // 視角自動拉到第一棟建物
-  const first = data[0];
-  if (first && first.coordinates && first.coordinates.length > 0) {
-    flyToBuilding(first);
-  }
-};
+  //【方法】=====================================================================
+  // 將 polygon 座標轉為 flat array，並檢查是否為可繪製的有效面
+  const buildFlatCoords = (polygonCoords: number[][]) => {
+    const flatCoords: number[] = [];
+    const uniqueKeys = new Set<string>();
 
-// 本地 XML 上傳處理
-const handleFileUpload = async (event: Event) => {
-  const target = event.target as HTMLInputElement;
-  if (!target.files?.length) return;
+    polygonCoords.forEach(pt => {
+      if (pt.length < 2) return;
+      const lon = pt[0]!;
+      const lat = pt[1]!;
+      const alt = pt[2] ?? 0;
+      if (!Number.isFinite(lon) || !Number.isFinite(lat) || !Number.isFinite(alt)) return;
 
-  const file = target.files[0];
-  if (!file) return;
-  const formData = new FormData();
-  formData.append('file', file);
+      flatCoords.push(lon, lat, alt);
+      uniqueKeys.add(`${lon},${lat},${alt}`);
+    });
 
-  try {
-    const res = await axios.post('/api/building/import-file', formData);
-    loadDataToMap(res.data);
-  } catch (err) {
-    alert('檔案解析失敗！');
-  }
-};
+    // 至少 3 個不重複頂點才能構成有效 polygon
+    if (flatCoords.length < 9 || uniqueKeys.size < 3) return null;
+    return flatCoords;
+  };
 
-// 網址 XML 連線處理
-const fetchFromUrl = async () => {
-  if (!apiUrl.value) return;
-  try {
-    const res = await axios.get<BuildingPart[]>(`http://localhost:5000/api/building/import-url?url=${encodeURIComponent(apiUrl.value)}`);
-    loadDataToMap(res.data);
-  } catch (err) {
-    alert('URL 載入失敗！');
-  }
-};
+  // 呼叫 API 處理後端資料並上圖
+  const loadDataToMap = (data: BuildingPart[]) => {
+    try {
 
-// 點擊列表，視角飛到該建物
-const flyToBuilding = (b: BuildingPart) => {
-  if (!viewer || !b.coordinates?.[0]?.[0]) return;
-  const firstPt = b.coordinates[0][0];
-  viewer.camera.flyTo({
-    destination: Cesium.Cartesian3.fromDegrees(firstPt[0], firstPt[1], firstPt[2] + 150), // 留 150m 高度俯瞰
-    orientation: {
-      pitch: Cesium.Math.toRadians(-45)
+      buildings.value = data.map(b => ({ ...b, rowId: crypto.randomUUID() }));
+      if (!viewer) return;
+
+      viewer.entities.removeAll(); // 清空舊建物
+
+      buildings.value.forEach(b => {
+        // 如果連坐標都沒解析出來，則無法渲染
+        if (!b.coordinates || b.coordinates.length === 0) return;
+
+        b.coordinates.forEach((polygonCoords) => {
+          const flatCoords = buildFlatCoords(polygonCoords);
+          if (!flatCoords) return;
+
+          // 設定不同品質狀態的顏色
+          let color = Cesium.Color.BLUE.withAlpha(0.7); // 預設正常
+          if (!b.isValid && !b.isFixed) color = Cesium.Color.RED.withAlpha(0.7); // 錯誤且未修復
+          if (b.isFixed) color = Cesium.Color.ORANGE.withAlpha(0.7); // 已修復
+
+          // boundedBy 已是 3D 立面，直接依各頂點高度繪製，不做 extrude
+          viewer!.entities.add({
+            id: crypto.randomUUID(),
+            name: `建號: ${b.buildingNo} (${b.floor}F)`,
+            description: `
+            <p><b>MID:</b> ${b.mid}</p>
+            <p><b>異常資訊:</b> ${b.errorMessages.join(', ') || '無'}</p>
+            <p><b>修復紀錄:</b> ${b.fixMessages.join(', ') || '無'}</p>
+          `,
+            polygon: {
+              hierarchy: Cesium.Cartesian3.fromDegreesArrayHeights(flatCoords),
+              perPositionHeight: true,
+              material: color,
+              outline: true,
+              outlineColor: Cesium.Color.BLACK
+            }
+          });
+        });
+      });
+
+      // 視角自動拉到第一棟建物
+      const first = buildings.value[0];
+      if (first && first.coordinates && first.coordinates.length > 0) {
+        flyToBuilding(first);
+      }
     }
-  });
-};
+    catch (error) {
+      console.error('載入資料到地圖時發生錯誤:', error);
+      Swal.fire('錯誤', '載入資料到地圖時發生錯誤，請檢查資料格式。', 'warning');
+    }
+  };
+
+  // 本地 XML 上傳處理
+  const handleFileUpload = async (event: Event) => {
+    const target = event.target as HTMLInputElement;
+    if (!target.files?.length) return;
+
+    const file = target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await axios.post('/api/building/import-file', formData); // 後端 API 處理 XML
+      loadDataToMap(res.data); // 載入資料到地圖
+    } catch (error) {
+      console.error("檔案解析失敗：", error);
+      Swal.fire({
+        title: '檔案解析失敗！',
+        icon: 'warning',
+      });
+    }
+  };
+
+  // 網址 XML 連線處理
+  const fetchFromUrl = async () => {
+    if (!apiUrl.value) return;
+    try {
+      // 後端 API 取得 XML 並解析
+      const res = await axios.get<BuildingPart[]>(`/api/building/import-url?url=${encodeURIComponent(apiUrl.value)}`);
+
+      // 載入資料到地圖
+      loadDataToMap(res.data);
+    } catch (error) {
+      console.error("URL 載入失敗：", error);
+      Swal.fire({
+        title: 'URL 載入失敗！',
+        icon: 'warning',
+      });
+    }
+  };
+
+  // 點擊列表，視角飛到該建物
+  const flyToBuilding = (b: BuildingPart) => {
+    if (!viewer || !b.coordinates?.[0]?.[0]) return;
+    const firstPt = b.coordinates[0][0];
+    if (firstPt.length < 2) return;
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(firstPt[0], firstPt[1], (firstPt[2] ?? 0) + 150), // 留 150m 高度俯瞰
+      orientation: {
+        pitch: Cesium.Math.toRadians(-45)
+      }
+    });
+  };
 </script>
 
 <style scoped>

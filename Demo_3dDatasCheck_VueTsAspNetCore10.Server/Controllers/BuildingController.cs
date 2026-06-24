@@ -31,7 +31,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
             return Ok(report);
         }
 
-        // 端點 2：連接 URL 取得 XML 資料
+        // 端點 2：連接 URL 取得建物資料（支援 XML 或 JSON）
         [HttpGet("import-url")]
         public async Task<IActionResult> ImportUrl([FromQuery] string url)
         {
@@ -39,7 +39,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
             try
             {
                 var content = await _httpClient.GetStringAsync(url);
-                var report = _processor.ProcessXml(content);
+                var report = _processor.ProcessContent(content);
                 return Ok(report);
             }
             catch (Exception ex)

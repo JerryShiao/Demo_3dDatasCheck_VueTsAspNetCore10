@@ -15,6 +15,7 @@
     <PackageJsonScriptsLintEslint Condition="$(PackageJsonScriptsLintEslint) == ''">eslint . --fix --cache</PackageJsonScriptsLintEslint>
     <PackageJsonDependenciesAxios Condition="$(PackageJsonDependenciesAxios) == ''">^1.18.1</PackageJsonDependenciesAxios>
     <PackageJsonDependenciesCesium Condition="$(PackageJsonDependenciesCesium) == ''">^1.142.0</PackageJsonDependenciesCesium>
+    <PackageJsonDependenciesSweetalert2 Condition="$(PackageJsonDependenciesSweetalert2) == ''">^11.26.25</PackageJsonDependenciesSweetalert2>
     <PackageJsonDependenciesVue Condition="$(PackageJsonDependenciesVue) == ''">^3.5.38</PackageJsonDependenciesVue>
     <PackageJsonDevdependenciesTsconfigNode24 Condition="$(PackageJsonDevdependenciesTsconfigNode24) == ''">^24.0.4</PackageJsonDevdependenciesTsconfigNode24>
     <PackageJsonDevdependenciesTypesCesium Condition="$(PackageJsonDevdependenciesTypesCesium) == ''">^1.67.14</PackageJsonDevdependenciesTypesCesium>
