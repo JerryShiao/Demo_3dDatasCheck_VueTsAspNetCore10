@@ -12,13 +12,13 @@
     </div>
 
     <div class="dialog-body">
-      <div class="section">
+      <!--<div class="section">
         <label>1. 匯入本地 XML 檔案：</label>
         <input type="file" accept=".xml" @change="onFileUpload" />
-      </div>
+      </div>-->
 
       <div class="section">
-        <label>2. 連接 URL 取得資料：</label>
+        <label>連接 URL 取得資料：</label>
         <div class="url-input">
           <input :value="apiUrl"
                  type="text"
