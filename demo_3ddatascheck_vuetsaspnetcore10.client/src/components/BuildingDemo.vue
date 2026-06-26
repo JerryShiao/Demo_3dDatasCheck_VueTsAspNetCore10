@@ -2,70 +2,27 @@
 
 <template>
   <div class="demo-container">
-    <!-- 面板內容 -->
-    <div class="control-panel">
-      <h3>3D 建物檢核 Demo</h3>
-
-      <div class="section">
-        <label>1. 匯入本地 XML 檔案：</label>
-        <input type="file" @change="handleFileUpload" accept=".xml" />
-      </div>
-
-      <div class="section">
-        <label>2. 連接 URL 取得資料：</label>
-        <div class="url-input">
-          <input v-model="apiUrl" type="text" placeholder="https://api.example.com/building.xml" />
-          <button @click="fetchFromUrl">連線並載入</button>
-        </div>
-      </div>
-
-      <div class="section data-list">
-        <h4>建物物件與品質報告 (總計: {{ buildings.length }} 筆)</h4>
-        <div class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>MID</th>
-                <th>建號</th>
-                <th>樓層</th>
-                <th>狀態</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="b in buildings"
-                  :key="b.rowId"
-                  class="clickable-row"
-                  :class="{ 'row-active': hoveredRowId === b.rowId }"
-                  @click="flyToBuilding(b)"
-                  @mouseenter="highlightBuilding(b)"
-                  @mouseleave="clearBuildingHighlight()">
-                <!--MID-->
-                <td>{{ b.mid }}</td>
-                <!--建號-->
-                <td>{{ b.buildingNo }}</td>
-                <!--樓層-->
-                <td>{{ b.floor }}</td>
-                <!--狀態-->
-                <td>
-                  <span v-if="b.isFloating" class="badge danger" :title="b.errorMessages.join(', ')">浮空</span>
-                  <span v-else-if="b.isValid && !b.isFixed" class="badge success">正常</span>
-                  <span v-else-if="b.isFixed" class="badge warning" :title="b.fixMessages.join(', ')">已修復</span>
-                  <span v-else class="badge danger" :title="b.errorMessages.join(', ')">錯誤</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
     <div class="map-wrapper">
       <!--3D 地理空間平台-->
       <div id="cesiumContainer" class="map-container"></div>
 
+      <BuildingCheckDialog
+        v-model="showCheckDialog"
+        v-model:api-url="apiUrl"
+        :buildings="buildings"
+        :hovered-row-id="hoveredRowId"
+        @file-upload="handleFileUpload"
+        @fetch-from-url="fetchFromUrl"
+        @fly-to-building="flyToBuilding"
+        @highlight-building="highlightBuilding"
+        @clear-building-highlight="clearBuildingHighlight"
+      />
+
       <!-- 建物檢核 Button -->
       <div class="layer-trigger-container">
-        <div class="layer-control-btn">
+        <div class="layer-control-btn"
+             :class="{ active: showCheckDialog }"
+             @click="showCheckDialog = !showCheckDialog">
           <div class="btn-content">
             <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <!-- 建築物（currentColor 跟隨按鈕 color，hover 時一併變色） -->
@@ -100,11 +57,13 @@
   import * as Cesium from 'cesium';                             // Cesium 3D 地圖庫
   import 'cesium/Source/Widgets/widgets.css';                   // Cesium 預設樣式
   import type { BuildingPart } from '../types/BuildingPart.ts'; // 建物物件類型定義
+  import BuildingCheckDialog from './BuildingCheckDialog.vue';
 
   // 套件
   import Swal from 'sweetalert2';
 
   //【宣告】=====================================================================
+  const showCheckDialog = ref(false);        // 建物檢核跳窗顯示狀態
   const apiUrl = ref('');                    // API URL 輸入框綁定
   const buildings = ref<BuildingPart[]>([]); // 建物物件列表
   const hoveredRowId = ref<string | null>(null); // 目前 hover 的列表列
@@ -513,8 +472,10 @@
       // 逐一清除高亮效果
       entityIds?.forEach(id => {
         const entity = viewer!.entities.getById(id);               // 取得實體物件
-        if (!entity || !buildingObj) { return; }                   // 若找不到實體物件或建物物件，則跳過
-        applyEntityColors(entity, getBuildingColors(buildingObj)); // 將建物顏色設定套用到實體物件
+        if (!entity || !buildingObj) { return; }
+        const colors = getBuildingColors(buildingObj);
+        if (!colors) { return; }
+        applyEntityColors(entity, colors);
       });
 
       // 清除 hoveredRowId
@@ -552,8 +513,9 @@
           const flatCoords = buildFlatCoords(polygonCoords); // 將多邊形座標展平為一維陣列
           if (!flatCoords) { return; }                       // 若展平座標失敗，則跳過
 
-          // 取得建物顏色設定
-          const { color, outlineColor, outlineWidth } = getBuildingColors(buildingObj);
+          const colors = getBuildingColors(buildingObj);
+          if (!colors) { return; }
+          const { color, outlineColor, outlineWidth } = colors;
 
           // 建立建物實體ID，格式為 "rowId_polygonIndex"
           const entityId = `${buildingObj.rowId}-${polygonIndex}`;
@@ -587,7 +549,7 @@
 
         // 將建物實體ID陣列加入建物實體對應表
         if (entityIds.length > 0) {
-          buildingEntityMap.set(b.rowId, entityIds);
+          buildingEntityMap.set(buildingObj.rowId, entityIds);
         }
       });
     }
@@ -720,102 +682,14 @@
 
 <style scoped>
   .demo-container {
-    display: flex;
     width: 100vw;
     height: 100vh;
   }
 
-  .control-panel {
-    width: 400px;
-    background: #f8f9fa;
-    padding: 20px;
-    box-shadow: 2px 0 5px rgba(0,0,0,0.1);
-    display: flex;
-    flex-direction: column;
-  }
-
-  .map-container {
-    flex: 1;
-    height: 100%;
-  }
-
-  .section {
-    margin-bottom: 20px;
-  }
-
-  .url-input {
-    display: flex;
-    gap: 5px;
-    margin-top: 5px;
-  }
-
-    .url-input input {
-      flex: 1;
-    }
-
-  .data-list {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .table-wrapper {
-    flex: 1;
-    overflow-y: auto;
-    background: white;
-    border: 1px solid #dee2e6;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    text-align: left;
-    font-size: 14px;
-  }
-
-  th, td {
-    padding: 8px;
-    border-bottom: 1px solid #dee2e6;
-  }
-
-  .clickable-row {
-    cursor: pointer;
-  }
-
-    .clickable-row:hover,
-    .clickable-row.row-active {
-      background: #e7f5ff;
-    }
-
-    .clickable-row.row-active {
-      box-shadow: inset 3px 0 0 #228be6;
-    }
-
-  .badge {
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 12px;
-    color: white;
-  }
-
-  .success {
-    background: #2b8a3e;
-  }
-
-  .warning {
-    background: #e67e22;
-  }
-
-  .danger {
-    background: #c92a2a;
-  }
-
   .map-wrapper {
-    position: relative; /* 絕對定位的參考點 */
-    flex: 1; /* 取代原本 .map-container 佔滿右側空間 */
+    position: relative;
+    width: 100%;
     height: 100%;
-    min-width: 0; /* 避免 flex 子項溢出 */
   }
 
   .map-container {
@@ -857,6 +731,14 @@
       transform: scale(0.98);
     }
 
+    /* 跳窗開啟時高亮 */
+    .layer-control-btn.active {
+      color: #228be6;
+      background: #e7f5ff;
+      border-color: #3c90cd;
+      box-shadow: 0 4px 12px rgba(60, 144, 205, 0.25);
+    }
+
   .btn-content {
     display: flex;
     flex-direction: column;
@@ -879,7 +761,8 @@
     }
 
   /* hover 時文字跟隨按鈕變藍 */
-  .layer-control-btn:hover .btn-content p {
+  .layer-control-btn:hover .btn-content p,
+  .layer-control-btn.active .btn-content p {
     color: #3c90cd;
   }
 </style>
