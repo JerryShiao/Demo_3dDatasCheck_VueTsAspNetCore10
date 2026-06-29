@@ -1,3 +1,4 @@
+<!--建物檢核 跳窗-->
 <template>
   <div v-show="modelValue"
        ref="dialogRef"
@@ -8,7 +9,9 @@
       <button type="button"
               class="dialog-close-btn"
               aria-label="關閉"
-              @click="close">×</button>
+              @click="close">
+        ×
+      </button>
     </div>
 
     <div class="dialog-body">
@@ -18,15 +21,17 @@
       </div>-->
 
       <div class="section">
-        <label>連接 URL 取得資料：</label>
-        <div class="url-input">
-          <input :value="apiUrl"
-                 type="text"
-                 placeholder="https://api.example.com/building.xml"
-                 @input="onApiUrlInput" />
-          <button type="button" @click="emit('fetch-from-url')">連線並載入</button>
-        </div>
+        <button type="button" class="import-url-btn" @click="showUrlImportDialog = true">
+          連接 URL 匯入
+        </button>
       </div>
+
+      <UrlImportDialog
+        v-model="showUrlImportDialog"
+        :api-url="apiUrl"
+        @update:api-url="emit('update:apiUrl', $event)"
+        @fetch-from-url="emit('fetch-from-url')"
+      />
 
       <div class="section data-list">
         <h4>建物物件與品質報告 (總計: {{ buildings.length }} 筆)</h4>
@@ -74,6 +79,7 @@
   import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
   import interact from 'interactjs';
   import type { BuildingPart } from '../types/BuildingPart.ts';
+  import UrlImportDialog from './UrlImportDialog.vue';
 
   const props = defineProps<{
     modelValue: boolean;
@@ -93,6 +99,7 @@
   }>();
 
   const dialogRef = ref<HTMLElement | null>(null);
+  const showUrlImportDialog = ref(false);
   const position = ref({ x: 0, y: 0 });
   let interactable: ReturnType<typeof interact> | null = null;
 
@@ -102,10 +109,6 @@
 
   const onFileUpload = (event: Event) => {
     emit('file-upload', event);
-  };
-
-  const onApiUrlInput = (event: Event) => {
-    emit('update:apiUrl', (event.target as HTMLInputElement).value);
   };
 
   const initInteract = () => {
@@ -247,14 +250,19 @@
     flex-shrink: 0;
   }
 
-  .url-input {
-    display: flex;
-    gap: 5px;
-    margin-top: 5px;
+  .import-url-btn {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #228be6;
+    border-radius: 4px;
+    background: #fff;
+    color: #228be6;
+    font-size: 14px;
+    cursor: pointer;
   }
 
-    .url-input input {
-      flex: 1;
+    .import-url-btn:hover {
+      background: #e7f5ff;
     }
 
   .data-list {

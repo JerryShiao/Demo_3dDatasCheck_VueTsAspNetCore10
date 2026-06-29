@@ -48,5 +48,30 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
             }
         }
 
+        // 端點 3：測試 URL 連線是否有效
+        [HttpGet("test-url")]
+        public async Task<IActionResult> TestUrl([FromQuery] string url)
+        {
+            if (string.IsNullOrEmpty(url))
+                return BadRequest(new { success = false, message = "網址不可為空" });
+
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                return BadRequest(new { success = false, message = "無效的 URL 格式" });
+
+            try
+            {
+                using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+                if (response.IsSuccessStatusCode)
+                    return Ok(new { success = true, message = $"連線成功 (HTTP {(int)response.StatusCode})" });
+
+                return Ok(new { success = false, message = $"連線失敗 (HTTP {(int)response.StatusCode})" });
+            }
+            catch (Exception ex)
+            {
+                return Ok(new { success = false, message = $"連線失敗: {ex.Message}" });
+            }
+        }
+
     }//class end
 }//namespace end
