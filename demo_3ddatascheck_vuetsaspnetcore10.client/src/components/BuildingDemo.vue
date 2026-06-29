@@ -638,6 +638,12 @@
 
       // 載入資料到地圖
       loadDataToMap(res.data);
+      
+      // 載入成功訊息
+      Swal.fire({
+        title: '資料載入成功！',
+        icon: 'success',
+      });
     }
     catch (error) {
       console.error("URL 載入失敗：", error);
