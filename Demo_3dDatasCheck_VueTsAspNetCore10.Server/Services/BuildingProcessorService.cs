@@ -294,7 +294,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             {
                 foreach (var pt in polygon)
                 {
-                    if (pt.Count < 3)
+                    if (pt == null || pt.Count < 3)
                     {
                         continue;
                     }                      
@@ -361,6 +361,21 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                         {
                             continue;
                         }
+                        // 若座標為空，則無法形成多邊形，跳過不檢測
+                        bool isValidPolygon = true;
+                        foreach (var pt in polygon)
+                        {
+                            if (pt == null || pt.Count < 3)
+                            {
+                                isValidPolygon = false;
+                                break;
+                            }
+                        }
+                        if (!isValidPolygon)
+                        {
+                            continue;
+                        }
+
                         // 第1個點的座標
                         var firstPoint = polygon[0];
 
