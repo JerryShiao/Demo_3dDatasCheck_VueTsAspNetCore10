@@ -4,6 +4,8 @@
        ref="dialogRef"
        class="building-check-dialog"
        :style="{ transform: `translate(${position.x}px, ${position.y}px)` }">
+
+    <!--跳窗標題-->
     <div class="dialog-header">
       <h3>3D 建物檢核 Demo</h3>
       <button type="button"
@@ -14,25 +16,26 @@
       </button>
     </div>
 
+    <!--跳窗內容-->
     <div class="dialog-body">
       <!--<div class="section">
-        <label>1. 匯入本地 XML 檔案：</label>
-        <input type="file" accept=".xml" @change="onFileUpload" />
-      </div>-->
-
+    <label>1. 匯入本地 XML 檔案：</label>
+    <input type="file" accept=".xml" @change="onFileUpload" />
+  </div>-->
+      <!--[連接 URL 匯入] Button-->
       <div class="section">
         <button type="button" class="import-url-btn" @click="showUrlImportDialog = true">
           連接 URL 匯入
         </button>
       </div>
 
-      <UrlImportDialog
-        v-model="showUrlImportDialog"
-        :api-url="apiUrl"
-        @update:api-url="emit('update:apiUrl', $event)"
-        @fetch-from-url="emit('fetch-from-url')"
-      />
+      <!--[連接 URL 匯入] 跳窗-->
+      <UrlImportDialog v-model="showUrlImportDialog"
+                       :api-url="apiUrl"
+                       @update:api-url="emit('update:apiUrl', $event)"
+                       @fetch-from-url="emit('fetch-from-url')" />
 
+      <!--[檢核結果] 列表-->
       <div class="section data-list">
         <h4>建物物件與品質報告 (總計: {{ buildings.length }} 筆)</h4>
         <div class="table-wrapper">
@@ -76,45 +79,98 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
-  import interact from 'interactjs';
-  import type { BuildingPart } from '../types/BuildingPart.ts';
-  import UrlImportDialog from './UrlImportDialog.vue';
+  //【引入】=====================================================================
+  import {
+    ref,         // Vue 3 Composition API 的 ref 函數，用於創建響應式引用
+    watch,       // 監聽
+    onMounted,   // 監聽組件掛載完成
+    onUnmounted, // 監聽組件掛載與卸載
+    nextTick     // 下一個 DOM 更新循環
+  } from 'vue';
+  import interact from 'interactjs';                            // 引入 interact.js 庫，用於實現拖拽和縮放功能
+  import type { BuildingPart } from '../types/BuildingPart.ts'; // 引入自定義的 BuildingPart 類型，用於描述建物物件的結構
+  import UrlImportDialog from './UrlImportDialog.vue';          // 引入 UrlImportDialog 組件，用於處理 URL 匯入功能
 
+  // 【宣告】=====================================================================
+
+  // defineProps：宣告「父元件可以傳給我哪些資料」
+  // 型別用泛型 <{ ... }> 寫，TypeScript 會做型別檢查
   const props = defineProps<{
-    modelValue: boolean;
-    apiUrl: string;
-    buildings: BuildingPart[];
-    hoveredRowId: string | null;
+    modelValue: boolean;         // 跳窗是否顯示（對應父元件的 v-model="showCheckDialog"）
+    apiUrl: string;              // API URL 字串（對應 v-model:api-url="apiUrl"）
+    buildings: BuildingPart[];   // 建物檢核結果列表，用來渲染表格
+    hoveredRowId: string | null; // 目前要高亮的那一列 rowId（地圖 hover 時由父元件同步過來）
   }>();
 
+  // defineEmits：宣告「我可以向父元件發出哪些事件」
+  // 方括號 [參數型別, ...] 描述每個事件攜帶的 payload
   const emit = defineEmits<{
-    'update:modelValue': [value: boolean];
-    'update:apiUrl': [value: string];
-    'file-upload': [event: Event];
-    'fetch-from-url': [];
-    'fly-to-building': [building: BuildingPart];
-    'highlight-building': [building: BuildingPart];
-    'clear-building-highlight': [];
+    'update:modelValue': [value: boolean];          // 關閉跳窗時通知父元件更新顯示狀態
+    'update:apiUrl': [value: string];               // URL 輸入變更時回寫給父元件
+    'fetch-from-url': [];                           // 使用者按「從 URL 匯入」，父元件負責打 API
+    'fly-to-building': [building: BuildingPart];    // 點擊表格列 → 父元件讓 Cesium 飛到該建物
+    'highlight-building': [building: BuildingPart]; // 滑鼠移入列 → 父元件在地圖上高亮建物
+    'clear-building-highlight': [];                 // 滑鼠移出列 → 父元件清除地圖高亮
   }>();
 
-  const dialogRef = ref<HTMLElement | null>(null);
+  // 是否顯示 [連接 URL 匯入] 跳窗
   const showUrlImportDialog = ref(false);
+
+  // 跳窗位置與大小
+  const dialogRef = ref<HTMLElement | null>(null);
+
+  // 跳窗位置
   const position = ref({ x: 0, y: 0 });
+
+  // interact.js 綁在跳窗 DOM 上的實例引用（負責拖曳標題列、調整跳窗大小）
+  // 型別為 interact(元素) 的回傳值；初始 null，在 initInteract 建立、teardownInteract 清空
+  // 使用 let 而非 ref：僅供腳本內部呼叫 .unset()，不需響應式、模板也不使用
   let interactable: ReturnType<typeof interact> | null = null;
 
+  //【生命週期】===================================================================
+  // 監聽視窗開啟
+  watch(() => props.modelValue, async (visible) => {
+    if (visible) {
+      await nextTick(); // 等待 DOM 更新完成，確保 dialogRef 已經指向正確的元素
+      initInteract();   // 初始化 interact.js，綁定拖曳與縮放事件
+    } else {
+      teardownInteract(); // 卸載 interact.js，避免記憶體洩漏
+    }
+  });
+
+  // 組件掛載完成
+  onMounted(async () => {
+    if (props.modelValue) {
+      await nextTick(); // 等待 DOM 更新完成，確保 dialogRef 已經指向正確的元素
+      initInteract();   // 初始化 interact.js，綁定拖曳與縮放事件
+    }
+  });
+
+  // 組件卸載時，清理 interact.js
+  onUnmounted(() => {
+    teardownInteract(); // 卸載 interact.js，避免記憶體洩漏
+  });
+
+  //【方法】=======================================================================
+
+  //#region ◆視窗關閉 [close]
+  /**
+   * 視窗關閉
+   */
   const close = () => {
-    emit('update:modelValue', false);
+    emit('update:modelValue', false); // 通知父元件關閉跳窗
   };
+  //#endregion
 
-  const onFileUpload = (event: Event) => {
-    emit('file-upload', event);
-  };
-
+  //#region ◆初始化 [interactjs]
+  /**
+   * 初始化 interactjs
+   */
   const initInteract = () => {
     const el = dialogRef.value;
     if (!el) return;
 
+    // 若先前已綁定（例如跳窗重開），先解除避免重複註冊事件
     interactable?.unset();
 
     let x = position.value.x;
@@ -152,31 +208,18 @@
         },
       });
   };
+  //#endregion
 
+  //#region ◆解除 interactjs 綁定 [teardownInteract]
+  /**
+   * 解除 interactjs 綁定
+   */
   const teardownInteract = () => {
     interactable?.unset();
     interactable = null;
   };
+  //#endregion
 
-  watch(() => props.modelValue, async (visible) => {
-    if (visible) {
-      await nextTick();
-      initInteract();
-    } else {
-      teardownInteract();
-    }
-  });
-
-  onMounted(async () => {
-    if (props.modelValue) {
-      await nextTick();
-      initInteract();
-    }
-  });
-
-  onUnmounted(() => {
-    teardownInteract();
-  });
 </script>
 
 <style scoped>

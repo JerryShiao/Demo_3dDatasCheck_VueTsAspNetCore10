@@ -10,16 +10,27 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
     [Route("api/[controller]")]
     public class BuildingController : ControllerBase
     {
+        /// <summary>
+        /// 建物資料處理服務
+        /// </summary>
         private readonly BuildingProcessorService _processor;
+        /// <summary>
+        /// HTTP 客戶端
+        /// </summary>
         private readonly HttpClient _httpClient;
 
         public BuildingController(BuildingProcessorService processor, HttpClient httpClient)
         {
-            _processor = processor;
-            _httpClient = httpClient;
+            _processor = processor;   // 建物資料處理服務
+            _httpClient = httpClient; // HTTP 客戶端
         }
 
-        // 端點 1：匯入本地 XML 檔案
+        #region ◆匯入本地 XML 檔案 [ImportFile]
+        /// <summary>
+        /// 匯入本地 XML 檔案
+        /// </summary>
+        /// <param name="file">匯入檔案</param>
+        /// <returns></returns>
         [HttpPost("import-file")]
         public IActionResult ImportFile(IFormFile file)
         {
@@ -30,8 +41,14 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
             var report = _processor.ProcessXml(content);
             return Ok(report);
         }
+        #endregion
 
-        // 端點 2：連接 URL 取得建物資料（支援 XML 或 JSON）
+        #region ◆連接 URL 取得建物資料（支援 XML 或 JSON）[ImportUrl]
+        /// <summary>
+        /// 連接 URL 取得建物資料（支援 XML 或 JSON）
+        /// </summary>
+        /// <param name="url">網址</param>
+        /// <returns></returns>
         [HttpGet("import-url")]
         public async Task<IActionResult> ImportUrl([FromQuery] string url)
         {
@@ -47,8 +64,14 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
                 return StatusCode(500, $"無法從網址取得資料: {ex.Message}");
             }
         }
+        #endregion
 
-        // 端點 3：測試 URL 連線是否有效
+        #region ◆測試 URL 連線是否有效 [TestUrl]
+        /// <summary>
+        /// 測試 URL 連線是否有效
+        /// </summary>
+        /// <param name="url">網址</param>
+        /// <returns></returns>
         [HttpGet("test-url")]
         public async Task<IActionResult> TestUrl([FromQuery] string url)
         {
@@ -72,6 +95,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
                 return Ok(new { success = false, message = $"連線失敗: {ex.Message}" });
             }
         }
+        #endregion
 
     }//class end
 }//namespace end
