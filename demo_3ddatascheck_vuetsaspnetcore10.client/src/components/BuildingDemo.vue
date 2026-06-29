@@ -595,20 +595,10 @@
   /**
   * 本地 XML 上傳處理
   */
-  const handleFileUpload = async (event: Event) => {
+  const handleFileUpload = async (file: File) => {
     try {
-
-      // 取得上傳的檔案
-      const target = event.target as HTMLInputElement;
-      if (!target.files?.length) { return; }
-
-      // 取得第一個檔案
-      const file = target.files[0];
-      if (!file) { return; }
-
-      // 讀取檔案內容
       const formData = new FormData();
-      formData.append('file', file); // 將檔案加入 FormData
+      formData.append('file', file);
 
       // 後端 API 處理 XML
       const res = await axios.post('/api/building/import-file', formData);

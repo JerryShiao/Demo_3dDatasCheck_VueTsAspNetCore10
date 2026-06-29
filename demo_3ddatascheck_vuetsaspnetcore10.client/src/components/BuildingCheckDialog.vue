@@ -18,13 +18,19 @@
 
     <!--跳窗內容-->
     <div class="dialog-body">
-      <!--<div class="section">
-    <label>1. 匯入本地 XML 檔案：</label>
-    <input type="file" accept=".xml" @change="onFileUpload" />
-  </div>-->
-      <!--[連接 URL 匯入] Button-->
-      <div class="section">
-        <button type="button" class="import-url-btn" @click="showUrlImportDialog = true">
+      <div class="section import-actions">
+        <button type="button" class="import-action-btn" @click="showFileImportDialog = true">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <polyline points="7 10 12 15 17 10"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <line x1="12" y1="15" x2="12" y2="3"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          匯入檔案
+        </button>
+        <button type="button" class="import-action-btn" @click="showUrlImportDialog = true">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
                   stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -35,7 +41,9 @@
         </button>
       </div>
 
-      <!--[連接 URL 匯入] 跳窗-->
+      <FileImportDialog v-model="showFileImportDialog"
+                        @import-file="emit('file-upload', $event)" />
+
       <UrlImportDialog v-model="showUrlImportDialog"
                        :api-url="apiUrl"
                        @update:api-url="emit('update:apiUrl', $event)"
@@ -118,6 +126,7 @@
   } from 'vue';
   import interact from 'interactjs';                            // 引入 interact.js 庫，用於實現拖拽和縮放功能
   import type { BuildingPart } from '../types/BuildingPart.ts'; // 引入自定義的 BuildingPart 類型，用於描述建物物件的結構
+  import FileImportDialog from './FileImportDialog.vue';        // 引入 FileImportDialog 組件，用於處理本地檔案匯入功能
   import UrlImportDialog from './UrlImportDialog.vue';          // 引入 UrlImportDialog 組件，用於處理 URL 匯入功能
 
   // 【宣告】=====================================================================
@@ -136,6 +145,7 @@
   const emit = defineEmits<{
     'update:modelValue': [value: boolean];          // 關閉跳窗時通知父元件更新顯示狀態
     'update:apiUrl': [value: string];               // URL 輸入變更時回寫給父元件
+    'file-upload': [file: File];                     // 使用者確認匯入本地檔案，父元件負責打 API
     'fetch-from-url': [];                           // 使用者按「從 URL 匯入」，父元件負責打 API
     'fly-to-building': [building: BuildingPart];    // 點擊表格列 → 父元件讓 Cesium 飛到該建物
     'highlight-building': [building: BuildingPart]; // 滑鼠移入列 → 父元件在地圖上高亮建物
@@ -154,6 +164,9 @@
     fixed: 1,
     normal: 2,
   };
+
+  // 是否顯示 [匯入檔案] 跳窗
+  const showFileImportDialog = ref(false);
 
   // 是否顯示 [連接 URL 匯入] 跳窗
   const showUrlImportDialog = ref(false);
@@ -424,12 +437,17 @@
     flex-shrink: 0;
   }
 
-  .import-url-btn {
+  .import-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .import-action-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    width: 100%;
+    flex: 1;
     padding: 8px 12px;
     border: 1px solid #228be6;
     border-radius: 4px;
@@ -439,11 +457,11 @@
     cursor: pointer;
   }
 
-    .import-url-btn svg {
+    .import-action-btn svg {
       flex-shrink: 0;
     }
 
-    .import-url-btn:hover {
+    .import-action-btn:hover {
       background: #e7f5ff;
     }
 
