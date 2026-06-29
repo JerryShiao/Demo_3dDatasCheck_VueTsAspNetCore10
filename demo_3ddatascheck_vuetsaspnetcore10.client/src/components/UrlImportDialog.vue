@@ -35,12 +35,37 @@
                     class="btn-secondary"
                     :disabled="isTesting"
                     @click="testConnection">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M5 12.55a11 11 0 0 1 14 0"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M8.53 16.11a6 6 0 0 1 6.95 0"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                <circle cx="12" cy="20" r="1" fill="currentColor" />
+              </svg>
               {{ isTesting ? '測試中...' : '連線測試' }}
             </button>
             <!--清除 Button-->
-            <button type="button" class="btn-secondary" @click="clearUrl">清除</button>
+            <button type="button" class="btn-secondary" @click="clearUrl">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"
+                        stroke="currentColor" stroke-width="1.5" />
+                <path d="m15 9-6 6M9 9l6 6"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              清除
+            </button>
             <!--連線並載入 Button-->
-            <button type="button" class="btn-primary" @click="fetchAndClose">連線並載入</button>
+            <button type="button" class="btn-primary" @click="fetchAndClose">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                <polyline points="7 10 12 15 17 10"
+                          stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                <line x1="12" y1="15" x2="12" y2="3"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              連線並載入
+            </button>
           </div>
 
           <!--連線測試結果顯示-->
@@ -356,11 +381,20 @@
 
   .btn-primary,
   .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     padding: 6px 12px;
     border-radius: 4px;
     font-size: 14px;
     cursor: pointer;
     white-space: nowrap;
+  }
+
+  .btn-primary svg,
+  .btn-secondary svg {
+    flex-shrink: 0;
   }
 
   .btn-primary {

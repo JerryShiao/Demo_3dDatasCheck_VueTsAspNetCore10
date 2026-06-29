@@ -25,6 +25,12 @@
       <!--[連接 URL 匯入] Button-->
       <div class="section">
         <button type="button" class="import-url-btn" @click="showUrlImportDialog = true">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
           連接 URL 匯入
         </button>
       </div>
@@ -37,19 +43,41 @@
 
       <!--[檢核結果] 列表-->
       <div class="section data-list">
-        <h4>建物物件與品質報告 (總計: {{ buildings.length }} 筆)</h4>
+        <h4>建物物件與品質報告 (顯示: {{ displayedBuildings.length }} / 總計: {{ buildings.length }} 筆)</h4>
+        <div class="filter-bar">
+          <label class="filter-item">
+            <input v-model="showNormal" type="checkbox" />
+            顯示正常
+          </label>
+          <label class="filter-item">
+            <input v-model="showAbnormal" type="checkbox" />
+            顯示異常
+          </label>
+          <label class="filter-item">
+            <input v-model="showFixed" type="checkbox" />
+            顯示已修復
+          </label>
+        </div>
         <div class="table-wrapper">
           <table>
             <thead>
               <tr>
-                <th>MID</th>
-                <th>建號</th>
-                <th>樓層</th>
-                <th>狀態</th>
+                <th class="sortable-th" @click="toggleSort('mid')">
+                  MID<span v-if="sortKey === 'mid'" class="sort-indicator">{{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
+                </th>
+                <th class="sortable-th" @click="toggleSort('buildingNo')">
+                  建號<span v-if="sortKey === 'buildingNo'" class="sort-indicator">{{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
+                </th>
+                <th class="sortable-th" @click="toggleSort('floor')">
+                  樓層<span v-if="sortKey === 'floor'" class="sort-indicator">{{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
+                </th>
+                <th class="sortable-th" @click="toggleSort('status')">
+                  狀態<span v-if="sortKey === 'status'" class="sort-indicator">{{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="b in buildings"
+              <tr v-for="b in displayedBuildings"
                   :key="b.rowId"
                   class="clickable-row"
                   :class="{ 'row-active': hoveredRowId === b.rowId }"
@@ -82,6 +110,7 @@
   //【引入】=====================================================================
   import {
     ref,         // Vue 3 Composition API 的 ref 函數，用於創建響應式引用
+    computed,    // 計算屬性
     watch,       // 監聽
     onMounted,   // 監聽組件掛載完成
     onUnmounted, // 監聽組件掛載與卸載
@@ -113,8 +142,36 @@
     'clear-building-highlight': [];                 // 滑鼠移出列 → 父元件清除地圖高亮
   }>();
 
+  // 建物狀態類型
+  type BuildingCategory = 'normal' | 'abnormal' | 'fixed';
+
+  // 排序鍵類型
+  type SortKey = 'mid' | 'buildingNo' | 'floor' | 'status';
+
+  // 建物狀態排序順序
+  const STATUS_SORT_ORDER: Record<BuildingCategory, number> = {
+    abnormal: 0,
+    fixed: 1,
+    normal: 2,
+  };
+
   // 是否顯示 [連接 URL 匯入] 跳窗
   const showUrlImportDialog = ref(false);
+
+  // 是否顯示正常
+  const showNormal = ref(true);
+
+  // 是否顯示異常
+  const showAbnormal = ref(true);
+
+  // 是否顯示已修復
+  const showFixed = ref(true);
+
+  // 排序鍵
+  const sortKey = ref<SortKey | null>(null);
+
+  // 排序方向
+  const sortDirection = ref<'asc' | 'desc'>('asc');
 
   // 跳窗位置與大小
   const dialogRef = ref<HTMLElement | null>(null);
@@ -159,6 +216,17 @@
    */
   const close = () => {
     emit('update:modelValue', false); // 通知父元件關閉跳窗
+  };
+  //#endregion
+
+  //#region ◆列表排序 [toggleSort]
+  const toggleSort = (key: SortKey) => {
+    if (sortKey.value === key) {
+      sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortKey.value = key;
+      sortDirection.value = 'asc';
+    }
   };
   //#endregion
 
@@ -220,6 +288,69 @@
   };
   //#endregion
 
+  //#region ◆顯示的建物列表 [displayedBuildings]
+  /**
+   * 顯示的建物列表
+   */
+  const displayedBuildings = computed(() => {
+    const filtered = props.buildings.filter((b) => {
+      const category = getBuildingCategory(b);
+      if (category === 'normal') return showNormal.value;
+      if (category === 'abnormal') return showAbnormal.value;
+      return showFixed.value;
+    });
+
+    if (!sortKey.value) return filtered;
+
+    const key = sortKey.value;
+    const direction = sortDirection.value === 'asc' ? 1 : -1;
+
+    return [...filtered].sort((a, b) => {
+      let result = 0;
+      if (key === 'mid') {
+        result = compareStrings(a.mid, b.mid);
+      } else if (key === 'buildingNo') {
+        result = compareStrings(a.buildingNo, b.buildingNo);
+      } else if (key === 'floor') {
+        result = compareStrings(a.floor, b.floor);
+      } else {
+        result = getStatusSortOrder(a) - getStatusSortOrder(b);
+        if (result === 0) result = compareStrings(a.mid, b.mid);
+      }
+      return result * direction;
+    });
+  });
+  //#endregion
+
+  //#region ◆建物狀態類型 [getBuildingCategory]
+  /**
+   * 建物狀態類型
+   */
+  function getBuildingCategory(b: BuildingPart): BuildingCategory {
+    if (b.isFloating) return 'abnormal';
+    if (b.isFixed) return 'fixed';
+    if (b.isValid) return 'normal';
+    return 'abnormal';
+  }
+  //#endregion
+
+  //#region ◆建物狀態排序順序 [getStatusSortOrder]
+  /**
+   * 建物狀態排序順序
+   */
+  function getStatusSortOrder(b: BuildingPart): number {
+    return STATUS_SORT_ORDER[getBuildingCategory(b)];
+  }
+  //#endregion
+
+  //#region ◆比較字串 [compareStrings]
+  /**
+   * 比較字串
+   */
+  function compareStrings(a: string, b: string): number {
+    return a.localeCompare(b, 'zh-TW', { numeric: true });
+  }
+  //#endregion
 </script>
 
 <style scoped>
@@ -294,6 +425,10 @@
   }
 
   .import-url-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     width: 100%;
     padding: 8px 12px;
     border: 1px solid #228be6;
@@ -303,6 +438,10 @@
     font-size: 14px;
     cursor: pointer;
   }
+
+    .import-url-btn svg {
+      flex-shrink: 0;
+    }
 
     .import-url-btn:hover {
       background: #e7f5ff;
@@ -320,6 +459,28 @@
     .data-list h4 {
       margin: 0 0 8px;
       flex-shrink: 0;
+    }
+
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+  }
+
+  .filter-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #495057;
+    cursor: pointer;
+    user-select: none;
+  }
+
+    .filter-item input {
+      cursor: pointer;
     }
 
   .table-wrapper {
@@ -340,6 +501,22 @@
   th, td {
     padding: 8px;
     border-bottom: 1px solid #dee2e6;
+  }
+
+  .sortable-th {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+    .sortable-th:hover {
+      background: #e7f5ff;
+    }
+
+  .sort-indicator {
+    margin-left: 4px;
+    color: #228be6;
+    font-size: 12px;
   }
 
   .clickable-row {
