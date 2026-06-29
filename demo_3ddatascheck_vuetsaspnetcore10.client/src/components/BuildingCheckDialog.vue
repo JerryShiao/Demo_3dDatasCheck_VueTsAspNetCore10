@@ -88,7 +88,7 @@
                 <td>{{ b.buildingNo }}</td>
                 <td>{{ b.floor }}</td>
                 <td>
-                  <span v-if="b.isFloating" class="badge danger" :title="b.errorMessages.join(', ')">浮空</span>
+                  <span v-if="b.isFloating" class="badge danger" :title="b.errorMessages.join(', ')">異常</span>
                   <span v-else-if="b.isValid && !b.isFixed" class="badge success">正常</span>
                   <span v-else-if="b.isFixed" class="badge warning" :title="b.fixMessages.join(', ')">已修復</span>
                   <span v-else class="badge danger" :title="b.errorMessages.join(', ')">錯誤</span>
