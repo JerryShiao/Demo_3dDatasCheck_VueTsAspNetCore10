@@ -637,11 +637,28 @@
   };
   //#endregion
 
+  //#region ◆匯入資料 Loading 遮罩 [showImportLoading]
+  /**
+  * 匯入資料時顯示全螢幕 Loading 遮罩
+  */
+  const showImportLoading = () => {
+    Swal.fire({
+      title: '資料處理中...',
+      text: '請稍候，系統正在解析並載入資料',
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      showConfirmButton: false,
+      didOpen: () => Swal.showLoading(),
+    });
+  };
+  //#endregion
+
   //#region ◆本地檔案上傳處理 [handleFileUpload]
   /**
   * 本地檔案上傳處理
   */
   const handleFileUpload = async (file: File) => {
+    showImportLoading();
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -650,8 +667,9 @@
       const res = await axios.post('/api/building/import-file', formData);
 
       // 載入資料到地圖
-      loadDataToMap(res.data);
+      await loadDataToMap(res.data);
 
+      Swal.close();
       // 載入成功訊息
       Swal.fire({
         title: '資料載入成功！',
@@ -660,6 +678,7 @@
     }
     catch (error) {
       console.error("檔案解析失敗：", error);
+      Swal.close();
       Swal.fire({
         title: '檔案解析失敗！',
         icon: 'warning',
@@ -674,13 +693,15 @@
   */
   const fetchFromUrl = async () => {
     if (!apiUrl.value) { return; }
+    showImportLoading();
     try {
       // 後端 API 取得 XML 並解析
       const res = await axios.get<BuildingPart[]>(`/api/building/import-url?url=${encodeURIComponent(apiUrl.value)}`);
 
       // 載入資料到地圖
-      loadDataToMap(res.data);
-      
+      await loadDataToMap(res.data);
+
+      Swal.close();
       // 載入成功訊息
       Swal.fire({
         title: '資料載入成功！',
@@ -689,6 +710,7 @@
     }
     catch (error) {
       console.error("URL 載入失敗：", error);
+      Swal.close();
       Swal.fire({
         title: 'URL 載入失敗！',
         icon: 'warning',
