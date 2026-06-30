@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Demo_3dDatasCheck_VueTsAspNetCore10.Server")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+413fcafdb35b2316dc63ab848f89012d2a4e2690")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0e72fda26b525acb094d9aef960bb41835bcf740")]
 [assembly: System.Reflection.AssemblyProductAttribute("Demo_3dDatasCheck_VueTsAspNetCore10.Server")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Demo_3dDatasCheck_VueTsAspNetCore10.Server")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

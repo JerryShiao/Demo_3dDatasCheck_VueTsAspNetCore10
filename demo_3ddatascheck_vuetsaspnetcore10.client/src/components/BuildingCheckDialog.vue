@@ -165,6 +165,7 @@
   import FileImportDialog from './FileImportDialog.vue';        // 引入 FileImportDialog 組件，用於處理本地檔案匯入功能
   import UrlImportDialog from './UrlImportDialog.vue';          // 引入 UrlImportDialog 組件，用於處理 URL 匯入功能
   import { downloadBuildingsXml } from '../utils/exportBuildingsXml.ts'; // 匯出建物資料為 XML
+  import Swal from 'sweetalert2'; // 引入 SweetAlert2 庫，用於顯示提示訊息
 
   // 【宣告】=====================================================================
 
@@ -357,10 +358,18 @@
   const handleExportXml = () => {
     const toExport = displayedBuildings.value;
     if (toExport.length === 0) {
-      alert('目前沒有勾選可顯示的建物資料可匯出。');
+      Swal.fire({
+        title: '未勾選任何建物資料，無法匯出。',
+        icon: 'warning',
+      });
+
       return;
     }
     downloadBuildingsXml(toExport);
+    Swal.fire({
+      title: '匯出 XML 成功！',
+      icon: 'success',
+    });
   };
   //#endregion
 
