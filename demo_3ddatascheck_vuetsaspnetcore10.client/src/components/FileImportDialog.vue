@@ -9,7 +9,7 @@
            aria-labelledby="file-import-title"
            :style="{ transform: `translate(calc(-50% + ${position.x}px), calc(-50% + ${position.y}px))` }">
         <div class="modal-header">
-          <h3 id="file-import-title">匯入本地 XML 檔案</h3>
+          <h3 id="file-import-title">匯入本地 XML / GeoJSON 檔案</h3>
           <button type="button"
                   class="modal-close-btn"
                   aria-label="關閉"
@@ -19,10 +19,10 @@
         </div>
 
         <div class="modal-body">
-          <label>選擇 XML 檔案：</label>
+          <label>選擇 XML 或 GeoJSON 檔案：</label>
           <input ref="fileInputRef"
                  type="file"
-                 accept=".xml"
+                 accept=".xml,.geojson"
                  class="file-input-hidden"
                  @change="onFileChange" />
           <div class="file-picker-row">

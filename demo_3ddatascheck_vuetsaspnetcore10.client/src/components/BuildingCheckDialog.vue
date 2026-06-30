@@ -62,6 +62,10 @@
             顯示異常
           </label>
           <label class="filter-item">
+            <input v-model="showError" type="checkbox" />
+            顯示錯誤
+          </label>
+          <label class="filter-item">
             <input v-model="showFixed" type="checkbox" />
             顯示已修復
           </label>
@@ -96,7 +100,7 @@
                 <td>{{ b.buildingNo }}</td>
                 <td>{{ b.floor }}</td>
                 <td>
-                  <span v-if="b.isFloating" class="badge danger" :title="b.errorMessages.join(', ')">異常</span>
+                  <span v-if="b.isFloating" class="badge abnormal" :title="b.errorMessages.join(', ')">異常</span>
                   <span v-else-if="b.isValid && !b.isFixed" class="badge success">正常</span>
                   <span v-else-if="b.isFixed" class="badge warning" :title="b.fixMessages.join(', ')">已修復</span>
                   <span v-else class="badge danger" :title="b.errorMessages.join(', ')">錯誤</span>
@@ -153,7 +157,7 @@
   }>();
 
   // 建物狀態類型
-  type BuildingCategory = 'normal' | 'abnormal' | 'fixed';
+  type BuildingCategory = 'normal' | 'abnormal' | 'error' | 'fixed';
 
   // 排序鍵類型
   type SortKey = 'mid' | 'buildingNo' | 'floor' | 'status';
@@ -161,8 +165,9 @@
   // 建物狀態排序順序
   const STATUS_SORT_ORDER: Record<BuildingCategory, number> = {
     abnormal: 0,
-    fixed: 1,
-    normal: 2,
+    error: 1,
+    fixed: 2,
+    normal: 3,
   };
 
   // 是否顯示 [匯入檔案] 跳窗
@@ -176,6 +181,9 @@
 
   // 是否顯示異常
   const showAbnormal = ref(true);
+
+  // 是否顯示錯誤
+  const showError = ref(true);
 
   // 是否顯示已修復
   const showFixed = ref(true);
@@ -310,6 +318,7 @@
       const category = getBuildingCategory(b);
       if (category === 'normal') return showNormal.value;
       if (category === 'abnormal') return showAbnormal.value;
+      if (category === 'error') return showError.value;
       return showFixed.value;
     });
 
@@ -343,7 +352,7 @@
     if (b.isFloating) return 'abnormal';
     if (b.isFixed) return 'fixed';
     if (b.isValid) return 'normal';
-    return 'abnormal';
+    return 'error';
   }
   //#endregion
 
@@ -511,9 +520,18 @@
 
   table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     text-align: left;
     font-size: 14px;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #fff;
+    box-shadow: inset 0 -1px 0 #dee2e6;
   }
 
   th, td {
@@ -567,6 +585,10 @@
 
   .danger {
     background: #c92a2a;
+  }
+
+  .abnormal {
+    background: #7048e8;
   }
 
   .resize-handle {

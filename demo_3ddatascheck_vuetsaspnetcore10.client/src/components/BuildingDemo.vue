@@ -137,8 +137,7 @@
 
       // 檢查 polygon 是否為有效面
       polygonCoords.forEach(pt => {
-        // 若 x 或 y 為 NaN，則視為無效面
-        if (pt.length < 2) {
+        if (!pt || pt.length < 2) {
           return;
         }
         const lon = pt[0]!;     // 經度
@@ -188,8 +187,10 @@
 
       // 遍歷建物物件的所有 polygon，找出最低高度
       buildingObj.coordinates?.forEach(polygon => {
+        if (!polygon) { return; }
         polygon.forEach(pt => {
-          if (pt.length >= 3 && Number.isFinite(pt[2]))
+          if (!pt || pt.length < 3) { return; }
+          if (Number.isFinite(pt[2]))
             minZ = Math.min(minZ, pt[2]!);
         });
       });
@@ -218,9 +219,9 @@
 
       // 遍歷建物物件的所有 polygon，計算中心點
       buildingObj.coordinates?.forEach(polygon => {
+        if (!polygon) { return; }
         polygon.forEach(pt => {
-          // 若 x 或 y 為 NaN，則視為無效面
-          if (pt.length < 2) {
+          if (!pt || pt.length < 2) {
             return;
           }
           // 若經緯度為無效數字，則跳過
@@ -510,6 +511,7 @@
 
         // 逐一建立建物實體物件
         buildingObj.coordinates.forEach((polygonCoords, polygonIndex) => {
+          if (!polygonCoords) { return; }
           const flatCoords = buildFlatCoords(polygonCoords); // 將多邊形座標展平為一維陣列
           if (!flatCoords) { return; }                       // 若展平座標失敗，則跳過
 

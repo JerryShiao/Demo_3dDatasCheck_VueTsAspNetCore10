@@ -70,8 +70,12 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             // 解析 XML 字串
             var doc = XDocument.Parse(xmlContent);
 
-            // 查找所有 ConsistsOfBuildingPart 元素
+            // 查找建物元素（支援 ConsistsOfBuildingPart 與 BuildingRegistration 兩種 XML 格式）
             var elements = doc.Descendants(XmlNs + "ConsistsOfBuildingPart");
+            if (!elements.Any())
+            {
+                elements = doc.Descendants(XmlNs + "BuildingRegistration");
+            }
 
             // 將 XML 元素轉換為 BuildingData 物件列表
             var buildings = elements.Select(el => ValidateAndFix(new BuildingData
@@ -308,6 +312,31 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         }
         #endregion
 
+        #region ◆過濾無效座標 [SanitizeCoordinates]
+        /// <summary>
+        /// 過濾 null polygon、null 點與點數不足的多邊形
+        /// </summary>
+        private static List<List<List<double>>> SanitizeCoordinates(List<List<List<double>>> rawCoords)
+        {
+            var sanitized = new List<List<List<double>>>();
+            foreach (var polygon in rawCoords)
+            {
+                if (polygon == null)
+                {
+                    continue;
+                }
+                var validPoints = polygon
+                    .Where(pt => pt != null && pt.Count >= 3)
+                    .ToList();
+                if (validPoints.Count >= 3)
+                {
+                    sanitized.Add(validPoints);
+                }
+            }
+            return sanitized;
+        }
+        #endregion
+
         #region ◆建物資料驗證和修復 [ValidateAndFix]
         /// <summary>
         /// 建物資料驗證和修復
@@ -350,7 +379,23 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 var rawCoords = JsonSerializer.Deserialize<List<List<List<double>>>>(dto.BoundedByRaw);
                 if (rawCoords != null && rawCoords.Count > 0)
                 {
-                    dto.Coordinates = rawCoords; // 設定座標資料
+                    var hadInvalidEntries = rawCoords.Any(p =>
+                        p == null || p.Any(pt => pt == null || pt.Count < 3));
+                    var sanitized = SanitizeCoordinates(rawCoords);
+                    if (sanitized.Count == 0)
+                    {
+                        dto.IsValid = false;
+                        dto.ErrorMessages.Add("座標資料無效（僅含空值或點數不足）");
+                        dto.Coordinates = new();
+                        return dto;
+                    }
+                    if (hadInvalidEntries)
+                    {
+                        dto.IsValid = false;
+                        dto.ErrorMessages.Add("座標含空值或無效點，已過濾無效幾何");
+                    }
+
+                    dto.Coordinates = sanitized; // 設定已過濾的座標資料
                     ComputeHeightBounds(dto);    // 計算高度邊界
 
                     // 逐一檢測3D網格座標

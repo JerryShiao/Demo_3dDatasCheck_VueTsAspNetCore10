@@ -13,32 +13,35 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
         /// <summary>
         /// 建物資料處理服務
         /// </summary>
-        private readonly BuildingProcessorService _processor;
+        private readonly BuildingProcessorService _processorService;
         /// <summary>
         /// HTTP 客戶端
         /// </summary>
         private readonly HttpClient _httpClient;
 
-        public BuildingController(BuildingProcessorService processor, HttpClient httpClient)
+        public BuildingController(BuildingProcessorService processorService, HttpClient httpClient)
         {
-            _processor = processor;   // 建物資料處理服務
+            _processorService = processorService;   // 建物資料處理服務
             _httpClient = httpClient; // HTTP 客戶端
         }
 
-        #region ◆匯入本地 XML 檔案 [ImportFile]
+        #region ◆匯入本地檔案（支援 XML 或 JSON） [ImportFile]
         /// <summary>
-        /// 匯入本地 XML 檔案
+        /// 匯入本地檔案（支援 XML 或 JSON）
         /// </summary>
         /// <param name="file">匯入檔案</param>
         /// <returns></returns>
         [HttpPost("import-file")]
         public IActionResult ImportFile(IFormFile file)
         {
-            if (file == null || file.Length == 0) return BadRequest("請上傳有效的 XML 檔案");
+            if (file == null || file.Length == 0)
+            {
+                return BadRequest("請上傳有效的 XML 或 JSON 檔案");
+            }
 
             using var reader = new StreamReader(file.OpenReadStream());
             var content = reader.ReadToEnd();
-            var report = _processor.ProcessXml(content);
+            var report = _processorService.ProcessContent(content);
             return Ok(report);
         }
         #endregion
@@ -56,7 +59,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
             try
             {
                 var content = await _httpClient.GetStringAsync(url);
-                var report = _processor.ProcessContent(content);
+                var report = _processorService.ProcessContent(content);
                 return Ok(report);
             }
             catch (Exception ex)
