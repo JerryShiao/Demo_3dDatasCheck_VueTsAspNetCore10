@@ -251,6 +251,50 @@
   };
   //#endregion
 
+  //#region ◆取得建物水平包圍盒 [getBuildingBounds]
+  /**
+   * 取得建物所有 polygon 的水平包圍盒與尺寸
+   */
+  const getBuildingBounds = (buildingObj: BuildingPart) => {
+    let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    let maxZ = -Infinity;
+
+    buildingObj.coordinates?.forEach(polygon => {
+      polygon?.forEach(pt => {
+        if (!pt || pt.length < 2) { return; }
+        if (!Number.isFinite(pt[0]) || !Number.isFinite(pt[1])) { return; }
+        minLon = Math.min(minLon, pt[0]!);
+        maxLon = Math.max(maxLon, pt[0]!);
+        minLat = Math.min(minLat, pt[1]!);
+        maxLat = Math.max(maxLat, pt[1]!);
+        if (pt.length >= 3 && Number.isFinite(pt[2])) {
+          maxZ = Math.max(maxZ, pt[2]!);
+        }
+      });
+    });
+
+    if (!Number.isFinite(minLon)) { return null; }
+
+    const centerLon = (minLon + maxLon) / 2;
+    const centerLat = (minLat + maxLat) / 2;
+    const mPerDegLat = 111320;
+    const mPerDegLon = 111320 * Math.cos(centerLat * Math.PI / 180);
+    const spanLonM = (maxLon - minLon) * mPerDegLon;
+    const spanLatM = (maxLat - minLat) * mPerDegLat;
+
+    return {
+      minLon,
+      maxLon,
+      minLat,
+      maxLat,
+      centerLon,
+      centerLat,
+      maxZ: Number.isFinite(maxZ) ? maxZ : 0,
+      spanM: Math.max(spanLonM, spanLatM, 20),
+    };
+  };
+  //#endregion
+
   //#region ◆標記建物為浮空 [markTerrainFloating]
   /**
   *  標記建物為浮空
@@ -653,21 +697,37 @@
   */
   const flyToBuilding = (b: BuildingPart) => {
     try {
-      // 若建物物件沒有座標，則跳過
-      if (!viewer || !b.coordinates?.[0]?.[0]) { return; }
+      if (!viewer) { return; }
 
-      // 取得建物的第一個座標點
-      const firstPt = b.coordinates[0][0];
+      const bounds = getBuildingBounds(b);
+      if (!bounds) { return; }
 
-      // 若座標點不完整，則跳過
-      if (firstPt.length < 2) { return; }
+      const entityIds = b.rowId ? buildingEntityMap.get(b.rowId) : undefined;
+      const entities = (entityIds ?? [])
+        .map(id => viewer!.entities.getById(id))
+        .filter((e): e is Cesium.Entity => !!e);
 
-      // 計算飛行位置，將高度設為建物最大高度 + 50 公尺
+      if (entities.length > 0) {
+        viewer.flyTo(entities, { duration: 1.5 });
+        return;
+      }
+
+      const padRatio = 0.15;
+      const padLon = (bounds.maxLon - bounds.minLon) * padRatio + 0.000001;
+      const padLat = (bounds.maxLat - bounds.minLat) * padRatio + 0.000001;
+      const rectangle = Cesium.Rectangle.fromDegrees(
+        bounds.minLon - padLon,
+        bounds.minLat - padLat,
+        bounds.maxLon + padLon,
+        bounds.maxLat + padLat,
+      );
+
       viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(firstPt[0], firstPt[1], (firstPt[2] ?? 0) + 150), // 留 150m 高度俯瞰
+        destination: rectangle,
+        duration: 1.5,
         orientation: {
-          pitch: Cesium.Math.toRadians(-45)
-        }
+          pitch: Cesium.Math.toRadians(-45),
+        },
       });
     }
     catch (error) {
