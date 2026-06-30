@@ -165,6 +165,7 @@
    * 視窗關閉
    */
   const close = () => {
+    clearUrl();
     emit('update:modelValue', false); // 通知父元件關閉跳窗
   };
   //#endregion

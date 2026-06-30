@@ -39,6 +39,22 @@
           </svg>
           連接 URL 匯入
         </button>
+        <button v-if="hasImportedData"
+                type="button"
+                class="import-action-btn danger"
+                @click="emit('clear-data')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <polyline points="3 6 5 6 21 6"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <line x1="10" y1="11" x2="10" y2="17"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <line x1="14" y1="11" x2="14" y2="17"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          清除資料
+        </button>
       </div>
 
       <!--[匯入檔案]跳窗-->
@@ -156,6 +172,7 @@
     'fly-to-building': [building: BuildingPart];    // 點擊表格列 → 父元件讓 Cesium 飛到該建物
     'highlight-building': [building: BuildingPart]; // 滑鼠移入列 → 父元件在地圖上高亮建物
     'clear-building-highlight': [];                 // 滑鼠移出列 → 父元件清除地圖高亮
+    'clear-data': [];                                 // 使用者按「清除資料」→ 父元件清除所有匯入資料
   }>();
 
   // 建物狀態類型
@@ -309,6 +326,13 @@
     interactable?.unset();
     interactable = null;
   };
+  //#endregion
+
+  //#region ◆是否有匯入資料 [hasImportedData]
+  /**
+   * 是否有匯入資料
+   */
+  const hasImportedData = computed(() => props.buildings.length > 0);
   //#endregion
 
   //#region ◆顯示的建物列表 [displayedBuildings]
@@ -476,6 +500,15 @@
       background: #e7f5ff;
     }
 
+    .import-action-btn.danger {
+      border-color: #c92a2a;
+      color: #c92a2a;
+    }
+
+      .import-action-btn.danger:hover {
+        background: #fff5f5;
+      }
+
   .data-list {
     flex: 1;
     display: flex;
@@ -585,7 +618,7 @@
     background: #e67e22;
   }
 
-  .danger {
+  .badge.danger {
     background: #c92a2a;
   }
 

@@ -16,6 +16,7 @@
         @fly-to-building="flyToBuilding"
         @highlight-building="highlightBuilding"
         @clear-building-highlight="clearBuildingHighlight"
+        @clear-data="handleClearData"
       />
 
       <!-- 建物檢核 Button -->
@@ -716,6 +717,45 @@
         icon: 'warning',
       });
     }
+  };
+  //#endregion
+
+  //#region ◆清除所有匯入資料 [clearImportedData]
+  /**
+  * 清除所有匯入資料（列表與圖台 3D 物件）
+  */
+  const clearImportedData = () => {
+    buildings.value = [];
+    if (viewer) {
+      viewer.entities.removeAll();
+    }
+    buildingEntityMap.clear();
+    hoveredRowId.value = null;
+  };
+  //#endregion
+
+  //#region ◆清除資料確認 [handleClearData]
+  /**
+  * 清除資料確認
+  */
+  const handleClearData = async () => {
+    const result = await Swal.fire({
+      title: '確定要清除所有匯入資料？',
+      text: '此操作將清除列表與圖台上的所有建物物件，且無法復原。',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: '確定清除',
+      cancelButtonText: '取消',
+    });
+
+    if (!result.isConfirmed) { return; }
+
+    clearImportedData();
+
+    Swal.fire({
+      title: '已清除所有匯入資料',
+      icon: 'success',
+    });
   };
   //#endregion
 
