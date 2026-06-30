@@ -41,6 +41,20 @@
         </button>
         <button v-if="hasImportedData"
                 type="button"
+                class="import-action-btn"
+                @click="handleExportXml">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <polyline points="17 8 12 3 7 8"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <line x1="12" y1="3" x2="12" y2="15"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          匯出 XML
+        </button>
+        <button v-if="hasImportedData"
+                type="button"
                 class="import-action-btn danger"
                 @click="emit('clear-data')">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -150,6 +164,7 @@
   import type { BuildingPart } from '../types/BuildingPart.ts'; // 引入自定義的 BuildingPart 類型，用於描述建物物件的結構
   import FileImportDialog from './FileImportDialog.vue';        // 引入 FileImportDialog 組件，用於處理本地檔案匯入功能
   import UrlImportDialog from './UrlImportDialog.vue';          // 引入 UrlImportDialog 組件，用於處理 URL 匯入功能
+  import { downloadBuildingsXml } from '../utils/exportBuildingsXml.ts'; // 匯出建物資料為 XML
 
   // 【宣告】=====================================================================
 
@@ -335,6 +350,20 @@
   const hasImportedData = computed(() => props.buildings.length > 0);
   //#endregion
 
+  //#region ◆匯出 XML [handleExportXml]
+  /**
+   * 匯出目前勾選顯示的建物資料為 XML 檔案
+   */
+  const handleExportXml = () => {
+    const toExport = displayedBuildings.value;
+    if (toExport.length === 0) {
+      alert('目前沒有勾選可顯示的建物資料可匯出。');
+      return;
+    }
+    downloadBuildingsXml(toExport);
+  };
+  //#endregion
+
   //#region ◆顯示的建物列表 [displayedBuildings]
   /**
    * 顯示的建物列表
@@ -474,6 +503,7 @@
 
   .import-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
