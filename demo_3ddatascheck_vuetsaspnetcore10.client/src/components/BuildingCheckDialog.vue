@@ -41,9 +41,11 @@
         </button>
       </div>
 
+      <!--[匯入檔案]跳窗-->
       <FileImportDialog v-model="showFileImportDialog"
                         @import-file="emit('file-upload', $event)" />
 
+      <!--[連接 URL 匯入]跳窗-->
       <UrlImportDialog v-model="showUrlImportDialog"
                        :api-url="apiUrl"
                        @update:api-url="emit('update:apiUrl', $event)"

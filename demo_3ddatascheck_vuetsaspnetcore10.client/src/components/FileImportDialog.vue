@@ -209,7 +209,7 @@
     inset: 0;
     z-index: 30;
     background: rgba(0, 0, 0, 0.4);
-    pointer-events: none;
+    pointer-events: auto;
   }
 
   .modal-dialog {
