@@ -637,9 +637,9 @@
   };
   //#endregion
 
-  //#region ◆本地 XML 上傳處理 [handleFileUpload]
+  //#region ◆本地檔案上傳處理 [handleFileUpload]
   /**
-  * 本地 XML 上傳處理
+  * 本地檔案上傳處理
   */
   const handleFileUpload = async (file: File) => {
     try {
@@ -651,6 +651,12 @@
 
       // 載入資料到地圖
       loadDataToMap(res.data);
+
+      // 載入成功訊息
+      Swal.fire({
+        title: '資料載入成功！',
+        icon: 'success',
+      });
     }
     catch (error) {
       console.error("檔案解析失敗：", error);
