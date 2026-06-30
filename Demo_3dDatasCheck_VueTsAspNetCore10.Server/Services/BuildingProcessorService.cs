@@ -101,7 +101,23 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// </summary>
         public List<BuildingData> ProcessJson(string jsonContent)
         {
-            // 反序列化 JSON 字串為 BuildingJsonRecord 物件列表
+            var trimmed = jsonContent.TrimStart();
+            if (trimmed.StartsWith('{'))
+            {
+                using var doc = JsonDocument.Parse(jsonContent);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("type", out var typeEl) &&
+                    typeEl.GetString() == "FeatureCollection" &&
+                    root.TryGetProperty("features", out var features) &&
+                    features.ValueKind == JsonValueKind.Array)
+                {
+                    var geoBuildings = ProcessGeoJsonFeatures(features);
+                    DetectFloatingIssues(geoBuildings);
+                    return geoBuildings;
+                }
+            }
+
+            // 反序列化 JSON 字串為 BuildingJsonRecord 物件列表（舊版陣列格式）
             var records = JsonSerializer.Deserialize<List<BuildingJsonRecord>>(jsonContent)
                 ?? new List<BuildingJsonRecord>();
 
@@ -117,6 +133,57 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
 
             DetectFloatingIssues(buildings); // 解析坐標字串並進行浮空檢測與修正
             return buildings; // 返回處理後的建物資料列表
+        }
+
+        /// <summary>
+        /// 解析 GeoJSON FeatureCollection 的 features 陣列
+        /// </summary>
+        private static List<BuildingData> ProcessGeoJsonFeatures(JsonElement features)
+        {
+            var buildings = new List<BuildingData>();
+            foreach (var feature in features.EnumerateArray())
+            {
+                if (!feature.TryGetProperty("properties", out var props))
+                {
+                    continue;
+                }
+
+                var boundedBy = "";
+                if (feature.TryGetProperty("geometry", out var geometry) &&
+                    geometry.TryGetProperty("coordinates", out var coordinates))
+                {
+                    boundedBy = coordinates.GetRawText();
+                }
+
+                buildings.Add(ValidateAndFix(new BuildingData
+                {
+                    Mid = GetJsonPropertyAsString(props, "MID"),
+                    Oid = GetJsonPropertyAsString(props, "OID"),
+                    BuildingNo = GetJsonPropertyAsString(props, "建號母號"),
+                    Floor = GetJsonPropertyAsString(props, "層次"),
+                    BoundedByRaw = boundedBy
+                }));
+            }
+            return buildings;
+        }
+
+        /// <summary>
+        /// 從 JsonElement 讀取屬性並轉為字串（支援字串與數字型別）
+        /// </summary>
+        private static string GetJsonPropertyAsString(JsonElement obj, string name)
+        {
+            if (!obj.TryGetProperty(name, out var value))
+            {
+                return "";
+            }
+            return value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString() ?? "",
+                JsonValueKind.Number => value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                _ => value.GetRawText()
+            };
         }
         #endregion
 
