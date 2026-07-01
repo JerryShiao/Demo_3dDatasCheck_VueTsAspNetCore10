@@ -32,6 +32,23 @@
             </label>
           </div>
 
+          <!--位移修正專用：水平 / 垂直子選項（僅 displacement 模式顯示）-->
+          <div v-if="repairMode === 'displacement'" class="mode-row">
+            <span class="field-label">位移方向</span>
+            <label class="mode-option">
+              <input v-model="horizontalCorrection" type="checkbox" />
+              水平修正
+            </label>
+            <label class="mode-option">
+              <input v-model="verticalCorrection" type="checkbox" />
+              垂直修正
+            </label>
+            <label class="mode-option">
+              <input v-model="verticalOverlapCorrection" type="checkbox" />
+              垂直重疊修正
+            </label>
+          </div>
+
           <!--浮空修正專用：缺漏層數上限設定（僅 floating 模式顯示）-->
           <div v-if="repairMode === 'floating'" class="gap-setting">
             <label class="field-label" for="max-missing-floors">缺漏層數上限 X</label>
@@ -88,7 +105,7 @@
             <!--執行修正 Button（未勾選任何列時 disabled）-->
             <button type="button"
                     class="btn-primary"
-                    :disabled="selectedRowIds.length === 0"
+                    :disabled="!canApplyRepair"
                     @click="applyRepair">
               執行修正
             </button>
@@ -150,6 +167,11 @@
   // 浮空修正時允許補齊的缺漏層數上限 X（預設 99）
   const maxMissingFloors = ref(99);
 
+  // 位移修正子選項（可複選，預設僅水平修正）
+  const horizontalCorrection = ref(true);
+  const verticalCorrection = ref(false);
+  const verticalOverlapCorrection = ref(false);
+
   // 使用者勾選要修復的樓層 rowId 清單
   const selectedRowIds = ref<string[]>([]);
 
@@ -172,6 +194,17 @@
       });
   });
 
+  // 是否可執行修正：至少勾選一筆樓層，且位移模式時至少勾選一種修正方向
+  const canApplyRepair = computed(() => {
+    if (selectedRowIds.value.length === 0) return false;
+    if (repairMode.value === 'displacement') {
+      return horizontalCorrection.value
+        || verticalCorrection.value
+        || verticalOverlapCorrection.value;
+    }
+    return true;
+  });
+
   //【生命週期】===================================================================
   // 監聽視窗開啟：重置表單狀態並初始化 interact.js
   watch(() => props.modelValue, async (visible) => {
@@ -179,6 +212,9 @@
       resetSelection();              // 預設全選所有浮空異常樓層
       maxMissingFloors.value = 99;   // 重置缺漏層數上限
       repairMode.value = 'floating'; // 重置為浮空修正模式
+      horizontalCorrection.value = true;  // 重置位移子選項
+      verticalCorrection.value = false;
+      verticalOverlapCorrection.value = false;
       await nextTick();              // 等待 DOM 更新完成，確保 dialogRef 已經指向正確的元素
       initInteract();                // 初始化 interact.js，綁定拖曳與縮放事件
     } else {
@@ -258,12 +294,15 @@
    * 將修正模式、勾選的 rowId 清單與缺漏層數上限組成 RepairRequest 傳給父元件，然後關閉跳窗
    */
   const applyRepair = () => {
-    if (selectedRowIds.value.length === 0) return;
+    if (!canApplyRepair.value) return;
 
     emit('apply-repair', {
       mode: repairMode.value,
       selectedRowIds: [...selectedRowIds.value],
       maxMissingFloors: Math.max(1, maxMissingFloors.value || 99), // 確保至少為 1
+      horizontalCorrection: horizontalCorrection.value,
+      verticalCorrection: verticalCorrection.value,
+      verticalOverlapCorrection: verticalOverlapCorrection.value,
     });
     close();
   };
