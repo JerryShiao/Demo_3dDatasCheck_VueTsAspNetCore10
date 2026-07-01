@@ -18,57 +18,71 @@
 
     <!--跳窗內容-->
     <div class="dialog-body">
-      <div class="section import-actions">
-        <button type="button" class="import-action-btn" @click="showFileImportDialog = true">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            <polyline points="7 10 12 15 17 10"
-                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            <line x1="12" y1="15" x2="12" y2="3"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          檔案匯入
-        </button>
-        <button type="button" class="import-action-btn" @click="showUrlImportDialog = true">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          URL 匯入
-        </button>
-        <button v-if="hasImportedData"
-                type="button"
-                class="import-action-btn"
-                @click="handleExportXml">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            <polyline points="17 8 12 3 7 8"
-                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            <line x1="12" y1="3" x2="12" y2="15"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          匯出 XML
-        </button>
-        <button v-if="hasImportedData"
-                type="button"
-                class="import-action-btn danger"
-                @click="emit('clear-data')">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <polyline points="3 6 5 6 21 6"
-                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            <line x1="10" y1="11" x2="10" y2="17"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            <line x1="14" y1="11" x2="14" y2="17"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          清除資料
-        </button>
+      <div class="section import-actions-rows">
+        <div class="import-actions-row">
+          <button type="button" class="import-action-btn" @click="showFileImportDialog = true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <polyline points="7 10 12 15 17 10"
+                        stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <line x1="12" y1="15" x2="12" y2="3"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            檔案匯入
+          </button>
+          <button type="button" class="import-action-btn" @click="showUrlImportDialog = true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            URL 匯入
+          </button>
+        </div>
+        <div class="import-actions-row">
+          <button v-if="hasImportedData"
+                  type="button"
+                  class="import-action-btn"
+                  @click="handleExportXml">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <polyline points="17 8 12 3 7 8"
+                        stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <line x1="12" y1="3" x2="12" y2="15"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            匯出 XML
+          </button>
+          <button v-if="hasAbnormalFloors"
+                  type="button"
+                  class="import-action-btn repair"
+                  @click="showDataRepairDialog = true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            資料修復
+          </button>
+          <button v-if="hasImportedData"
+                  type="button"
+                  class="import-action-btn danger"
+                  @click="emit('clear-data')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <polyline points="3 6 5 6 21 6"
+                        stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <line x1="10" y1="11" x2="10" y2="17"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <line x1="14" y1="11" x2="14" y2="17"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            清除資料
+          </button>
+        </div>
       </div>
 
       <!--[檔案匯入]跳窗-->
@@ -80,6 +94,11 @@
                        :api-url="apiUrl"
                        @update:api-url="emit('update:apiUrl', $event)"
                        @fetch-from-url="emit('fetch-from-url')" />
+
+      <!--[資料修復]跳窗-->
+      <DataRepairDialog v-model="showDataRepairDialog"
+                        :buildings="buildings"
+                        @apply-repair="onApplyRepair" />
 
       <!--[檢核結果] 列表-->
       <div class="section data-list">
@@ -164,7 +183,9 @@
   import type { BuildingPart } from '../types/BuildingPart.ts'; // 引入自定義的 BuildingPart 類型，用於描述建物物件的結構
   import FileImportDialog from './FileImportDialog.vue';        // 引入 FileImportDialog 組件，用於處理本地檔案匯入功能
   import UrlImportDialog from './UrlImportDialog.vue';          // 引入 UrlImportDialog 組件，用於處理 URL 匯入功能
+  import DataRepairDialog from './DataRepairDialog.vue';        // 引入 DataRepairDialog 組件，用於資料修復功能
   import { downloadBuildingsXml } from '../utils/exportBuildingsXml.ts'; // 匯出建物資料為 XML
+  import type { RepairRequest } from '../utils/buildingRepair.ts';
   import Swal from 'sweetalert2'; // 引入 SweetAlert2 庫，用於顯示提示訊息
 
   // 【宣告】=====================================================================
@@ -189,6 +210,7 @@
     'highlight-building': [building: BuildingPart]; // 滑鼠移入列 → 父元件在地圖上高亮建物
     'clear-building-highlight': [];                 // 滑鼠移出列 → 父元件清除地圖高亮
     'clear-data': [];                                 // 使用者按「清除資料」→ 父元件清除所有匯入資料
+    'repair-buildings': [request: RepairRequest];   // 使用者執行資料修復
     'update:visible-row-ids': [rowIds: string[]];   // 篩選變更 → 父元件同步圖台建物顯示/隱藏
   }>();
 
@@ -211,6 +233,9 @@
 
   // 是否顯示 [URL 匯入] 跳窗
   const showUrlImportDialog = ref(false);
+
+  // 是否顯示 [資料修復] 跳窗
+  const showDataRepairDialog = ref(false);
 
   // 是否顯示正常
   const showNormal = ref(true);
@@ -350,6 +375,22 @@
    * 是否有匯入資料
    */
   const hasImportedData = computed(() => props.buildings.length > 0);
+  //#endregion
+
+  //#region ◆是否有異常樓層 [hasAbnormalFloors]
+  /**
+   * 是否有異常樓層
+   */
+  const hasAbnormalFloors = computed(() => props.buildings.some((b) => b.isFloating));
+  //#endregion
+
+  //#region ◆執行資料修復 [onApplyRepair]
+  /**
+   * 執行資料修復
+   */
+  const onApplyRepair = (request: RepairRequest) => {
+    emit('repair-buildings', request);
+  };
   //#endregion
 
   //#region ◆匯出 XML [handleExportXml]
@@ -533,9 +574,14 @@
     flex-shrink: 0;
   }
 
-  .import-actions {
+  .import-actions-rows {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .import-actions-row {
+    display: flex;
     gap: 8px;
   }
 
@@ -569,6 +615,15 @@
 
       .import-action-btn.danger:hover {
         background: #fff5f5;
+      }
+
+    .import-action-btn.repair {
+      border-color: #7048e8;
+      color: #7048e8;
+    }
+
+      .import-action-btn.repair:hover {
+        background: #f3f0ff;
       }
 
   .data-list {

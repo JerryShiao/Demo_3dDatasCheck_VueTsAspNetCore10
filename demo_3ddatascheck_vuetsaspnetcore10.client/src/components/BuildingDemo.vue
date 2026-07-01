@@ -17,6 +17,7 @@
         @highlight-building="highlightBuilding"
         @clear-building-highlight="clearBuildingHighlight"
         @clear-data="handleClearData"
+        @repair-buildings="handleRepairBuildings"
         @update:visible-row-ids="onVisibleRowIdsChange"
       />
 
@@ -60,6 +61,8 @@
   import 'cesium/Source/Widgets/widgets.css';                   // Cesium 預設樣式
   import type { BuildingPart } from '../types/BuildingPart.ts'; // 建物物件類型定義
   import BuildingCheckDialog from './BuildingCheckDialog.vue';
+  import { applyBuildingRepair } from '../utils/buildingRepair.ts';
+  import type { RepairRequest } from '../utils/buildingRepair.ts';
 
   // 套件
   import Swal from 'sweetalert2';
@@ -756,6 +759,41 @@
       Swal.close();
       Swal.fire({
         title: 'URL 載入失敗！',
+        icon: 'warning',
+      });
+    }
+  };
+  //#endregion
+
+  //#region ◆資料修復處理 [handleRepairBuildings]
+  /**
+  * 資料修復處理
+  */
+  const handleRepairBuildings = async (request: RepairRequest) => {
+    try {
+      const result = applyBuildingRepair(buildings.value, request);
+      buildings.value = result.buildings.map((b) => ({
+        ...b,
+        rowId: b.rowId ?? crypto.randomUUID(),
+        errorMessages: [...(b.errorMessages ?? [])],
+        fixMessages: [...(b.fixMessages ?? [])],
+      }));
+
+      if (!viewer) return;
+
+      await detectTerrainFloating(buildings.value);
+      renderBuildingsOnMap();
+
+      Swal.fire({
+        title: '資料修復完成',
+        text: result.summary,
+        icon: 'success',
+      });
+    }
+    catch (error) {
+      console.error('資料修復失敗：', error);
+      Swal.fire({
+        title: '資料修復失敗',
         icon: 'warning',
       });
     }
