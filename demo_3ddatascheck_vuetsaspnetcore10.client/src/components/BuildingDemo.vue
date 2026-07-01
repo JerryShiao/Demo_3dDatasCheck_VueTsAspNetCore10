@@ -17,6 +17,7 @@
         @highlight-building="highlightBuilding"
         @clear-building-highlight="clearBuildingHighlight"
         @clear-data="handleClearData"
+        @update:visible-row-ids="onVisibleRowIdsChange"
       />
 
       <!-- 建物檢核 Button -->
@@ -68,6 +69,7 @@
   const apiUrl = ref('');                    // API URL 輸入框綁定
   const buildings = ref<BuildingPart[]>([]); // 建物物件列表
   const hoveredRowId = ref<string | null>(null); // 目前 hover 的列表列
+  const visibleRowIds = ref<Set<string>>(new Set()); // 篩選後應顯示的建物 rowId
   let viewer: Cesium.Viewer | null = null;   // Cesium Viewer 實例
   const buildingEntityMap = new Map<string, string[]>(); // rowId → Cesium entity id 列表
 
@@ -502,6 +504,44 @@
   };
   //#endregion
 
+  //#region ◆套用建物可見性 [applyBuildingVisibility]
+  /**
+   * 依篩選結果設定圖台建物 entity 的顯示/隱藏
+   */
+  const applyBuildingVisibility = () => {
+    try {
+      if (!viewer) { return; }
+
+      buildingEntityMap.forEach((entityIds, rowId) => {
+        const show = visibleRowIds.value.has(rowId);
+        entityIds.forEach((id) => {
+          const entity = viewer!.entities.getById(id);
+          if (entity) {
+            entity.show = show;
+          }
+        });
+      });
+
+      if (hoveredRowId.value && !visibleRowIds.value.has(hoveredRowId.value)) {
+        clearBuildingHighlight();
+      }
+    }
+    catch (error) {
+      console.error('applyBuildingVisibility 發生錯誤:', error);
+    }
+  };
+  //#endregion
+
+  //#region ◆篩選可見 rowId 變更 [onVisibleRowIdsChange]
+  /**
+   * 檢核跳窗篩選變更時，同步圖台建物顯示狀態
+   */
+  const onVisibleRowIdsChange = (rowIds: string[]) => {
+    visibleRowIds.value = new Set(rowIds);
+    applyBuildingVisibility();
+  };
+  //#endregion
+
   //#region ◆清除建物高亮效果 [clearBuildingHighlight]
   /**
   * 清除建物高亮效果
@@ -599,6 +639,8 @@
           buildingEntityMap.set(buildingObj.rowId, entityIds);
         }
       });
+
+      applyBuildingVisibility();
     }
     catch (error) {
       console.error('renderBuildingsOnMap 發生錯誤:', error);

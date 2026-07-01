@@ -75,7 +75,7 @@
       <FileImportDialog v-model="showFileImportDialog"
                         @import-file="emit('file-upload', $event)" />
 
-      <!--[連接 URL 匯入]跳窗-->
+      <!--[URL匯入]跳窗-->
       <UrlImportDialog v-model="showUrlImportDialog"
                        :api-url="apiUrl"
                        @update:api-url="emit('update:apiUrl', $event)"
@@ -189,6 +189,7 @@
     'highlight-building': [building: BuildingPart]; // 滑鼠移入列 → 父元件在地圖上高亮建物
     'clear-building-highlight': [];                 // 滑鼠移出列 → 父元件清除地圖高亮
     'clear-data': [];                                 // 使用者按「清除資料」→ 父元件清除所有匯入資料
+    'update:visible-row-ids': [rowIds: string[]];   // 篩選變更 → 父元件同步圖台建物顯示/隱藏
   }>();
 
   // 建物狀態類型
@@ -373,18 +374,40 @@
   };
   //#endregion
 
-  //#region ◆顯示的建物列表 [displayedBuildings]
+  //#region ◆篩選後的建物列表 [filteredBuildings]
   /**
-   * 顯示的建物列表
+   * 依狀態篩選的建物列表（不含排序）
    */
-  const displayedBuildings = computed(() => {
-    const filtered = props.buildings.filter((b) => {
+  const filteredBuildings = computed(() => {
+    return props.buildings.filter((b) => {
       const category = getBuildingCategory(b);
       if (category === 'normal') return showNormal.value;
       if (category === 'abnormal') return showAbnormal.value;
       if (category === 'error') return showError.value;
       return showFixed.value;
     });
+  });
+  //#endregion
+
+  //#region ◆同步可見 rowId 至圖台 [watch filteredBuildings]
+  watch(
+    filteredBuildings,
+    (buildings) => {
+      const rowIds = buildings
+        .map((b) => b.rowId)
+        .filter((id): id is string => !!id);
+      emit('update:visible-row-ids', rowIds);
+    },
+    { immediate: true },
+  );
+  //#endregion
+
+  //#region ◆顯示的建物列表 [displayedBuildings]
+  /**
+   * 顯示的建物列表
+   */
+  const displayedBuildings = computed(() => {
+    const filtered = filteredBuildings.value;
 
     if (!sortKey.value) return filtered;
 
