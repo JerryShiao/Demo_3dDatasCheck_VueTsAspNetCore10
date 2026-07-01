@@ -28,7 +28,7 @@
             <line x1="12" y1="15" x2="12" y2="3"
                   stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
-          匯入檔案
+          檔案匯入
         </button>
         <button type="button" class="import-action-btn" @click="showUrlImportDialog = true">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -37,7 +37,7 @@
             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
                   stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
-          連接 URL 匯入
+          URL 匯入
         </button>
         <button v-if="hasImportedData"
                 type="button"
@@ -71,7 +71,7 @@
         </button>
       </div>
 
-      <!--[匯入檔案]跳窗-->
+      <!--[檔案匯入]跳窗-->
       <FileImportDialog v-model="showFileImportDialog"
                         @import-file="emit('file-upload', $event)" />
 
@@ -205,10 +205,10 @@
     normal: 3,
   };
 
-  // 是否顯示 [匯入檔案] 跳窗
+  // 是否顯示 [檔案匯入] 跳窗
   const showFileImportDialog = ref(false);
 
-  // 是否顯示 [連接 URL 匯入] 跳窗
+  // 是否顯示 [URL 匯入] 跳窗
   const showUrlImportDialog = ref(false);
 
   // 是否顯示正常
@@ -445,7 +445,7 @@
     top: 80px;
     left: 16px;
     z-index: 20;
-    width: 400px;
+    width: 600px;
     height: 70vh;
     display: flex;
     flex-direction: column;

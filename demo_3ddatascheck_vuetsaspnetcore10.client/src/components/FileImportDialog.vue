@@ -1,4 +1,4 @@
-<!--[匯入檔案] 匯入跳窗-->
+<!--[檔案匯入] 匯入跳窗-->
 <template>
   <Teleport to="body">
     <div v-show="modelValue" class="modal-backdrop">
