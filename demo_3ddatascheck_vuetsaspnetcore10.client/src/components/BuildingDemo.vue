@@ -786,7 +786,7 @@
 
       Swal.fire({
         title: '資料修復完成',
-        text: result.summary,
+        html: result.summary,
         icon: 'success',
       });
     }

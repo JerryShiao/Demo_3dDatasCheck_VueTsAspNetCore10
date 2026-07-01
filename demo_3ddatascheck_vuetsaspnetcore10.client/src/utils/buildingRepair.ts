@@ -1026,13 +1026,13 @@ export function applyBuildingRepair(
 
   const parts: string[] = [];
   if (horizontal) {
-    parts.push(`已水平位移修正 ${horizontalFixedCount} 筆樓層`);
+    parts.push(`【水平位移】修正 ${horizontalFixedCount} 筆樓層`);
   }
   if (verticalOverlap) {
-    parts.push(`已垂直重疊修正 ${verticalOverlapFixedCount} 筆樓層`);
+    parts.push(`【垂直重疊】修正 ${verticalOverlapFixedCount} 筆樓層`);
   }
   if (vertical) {
-    parts.push(`已垂直位移修正 ${verticalFixedCount} 筆樓層`);
+    parts.push(`【垂直位移】修正 ${verticalFixedCount} 筆樓層`);
   }
   if (skippedCount > 0) {
     parts.push(`跳過 ${skippedCount} 筆無法對齊的樓層`);
@@ -1047,7 +1047,7 @@ export function applyBuildingRepair(
     fixedCount,
     skippedCount,
     skippedGaps: 0,
-    summary: parts.join('，'),
+    summary: parts.join('<br>'),
   };
 }
 //#endregion
