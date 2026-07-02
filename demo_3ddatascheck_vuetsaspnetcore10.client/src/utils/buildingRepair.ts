@@ -75,6 +75,107 @@ export function parseFloorNumber(floor: string): number | null {
 }
 //#endregion
 
+//#region ◆樓層排序鍵 [parseFloorSortKey]
+type FloorCategory = 'basement' | 'regular' | 'unknown' | 'rooftop';
+
+/**
+ * 解析樓層排序鍵（支援 B1 / 001 / R01）
+ */
+function parseFloorSortKey(floor: string): { category: FloorCategory; number: number; raw: string } {
+  const raw = floor?.trim() ?? '';
+  const upper = raw.toUpperCase();
+
+  if (!raw) {
+    return { category: 'unknown', number: 0, raw };
+  }
+
+  if (upper.startsWith('B') && upper.length > 1) {
+    const digits = upper.slice(1).replace(/\D/g, '');
+    const n = parseInt(digits, 10);
+    if (n > 0) {
+      return { category: 'basement', number: n, raw };
+    }
+  }
+
+  if (
+    upper.startsWith('R')
+    || upper.includes('RF')
+    || upper.includes('PRF')
+    || upper.includes('ROOF')
+  ) {
+    const digits = raw.replace(/\D/g, '');
+    const n = digits ? parseInt(digits, 10) : 0;
+    return { category: 'rooftop', number: Number.isFinite(n) ? n : 0, raw };
+  }
+
+  const floorNo = parseFloorNumber(raw);
+  if (floorNo !== null) {
+    return { category: 'regular', number: floorNo, raw };
+  }
+
+  return { category: 'unknown', number: 0, raw };
+}
+//#endregion
+
+//#region ◆樓層排序比較 [compareFloors]
+/**
+ * 樓層字串排序比較器
+ */
+function compareFloors(a: string, b: string): number {
+  const keyA = parseFloorSortKey(a);
+  const keyB = parseFloorSortKey(b);
+  const categoryOrder: Record<FloorCategory, number> = {
+    basement: 0,
+    regular: 1,
+    unknown: 2,
+    rooftop: 3,
+  };
+
+  const categoryCompare = categoryOrder[keyA.category] - categoryOrder[keyB.category];
+  if (categoryCompare !== 0) return categoryCompare;
+
+  const numberCompare = keyA.number - keyB.number;
+  if (numberCompare !== 0) return numberCompare;
+
+  return keyA.raw.localeCompare(keyB.raw, 'zh-TW');
+}
+//#endregion
+
+//#region ◆取得水平 footprint 環 [getFootprintRing]
+/**
+ * 取得水平 footprint 環
+ * 優先選擇 Z 變化最小且面積最大的多邊形，避免固體樓層側牆被誤當 footprint
+ */
+function getFootprintRing(building: BuildingPart): Ring2D {
+  const polygons = building.coordinates ?? [];
+  let bestRing: Ring2D = [];
+  let bestScore = -Infinity;
+
+  for (const polygon of polygons) {
+    const ring = ringTo2D(polygon);
+    const area = polygonArea2D(ring);
+    if (area <= 0) continue;
+
+    const zs = polygon
+      .map((pt) => (pt && pt.length >= 3 ? pt[2] : null))
+      .filter((z): z is number => z != null && Number.isFinite(z));
+    const zSpan = zs.length > 0 ? Math.max(...zs) - Math.min(...zs) : Number.POSITIVE_INFINITY;
+    const score = area - zSpan * 1_000_000;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRing = ring;
+    }
+  }
+
+  if (bestRing.length > 0) {
+    return bestRing;
+  }
+
+  return ringTo2D(polygons[0] ?? []);
+}
+//#endregion
+
 //#region ◆計算高度上下界 [computeHeightBounds]
 /**
  * 計算高度上下界
@@ -429,7 +530,7 @@ export function applyFloatingRepair(
     const sorted = selectedFloors
       .map((b) => ({ building: b, floorNo: parseFloorNumber(b.floor) }))
       .filter((x): x is { building: BuildingPart; floorNo: number } => x.floorNo !== null)
-      .sort((a, b) => a.floorNo - b.floorNo);
+      .sort((a, b) => compareFloors(a.building.floor, b.building.floor));
 
     // 檢查相鄰樓層之間的缺漏
     for (let i = 1; i < sorted.length; i++) {
@@ -512,25 +613,25 @@ function getHeightBounds(building: BuildingPart): { minZ: number; maxZ: number }
 //#endregion
 
 //#region ◆移除已解決的垂直重疊訊息 [removeVerticalOverlapMessages]
-function removeVerticalOverlapMessages(building: BuildingPart, neighborFloorNo: number): void {
+function removeVerticalOverlapMessages(building: BuildingPart, neighborFloor: string): void {
   building.errorMessages = building.errorMessages.filter(
-    (m) => !(m.includes('垂直重疊') && m.includes(`${neighborFloorNo} 樓`)),
+    (m) => !(m.includes('垂直重疊') && m.includes(`${neighborFloor} 樓`)),
   );
 }
 //#endregion
 
 //#region ◆移除已解決的垂直斷層訊息 [removeVerticalGapMessages]
-function removeVerticalGapMessages(building: BuildingPart, neighborFloorNo: number): void {
+function removeVerticalGapMessages(building: BuildingPart, neighborFloor: string): void {
   building.errorMessages = building.errorMessages.filter(
-    (m) => !(m.includes('垂直斷層') && m.includes(`${neighborFloorNo} 樓`)),
+    (m) => !(m.includes('垂直斷層') && m.includes(`${neighborFloor} 樓`)),
   );
 }
 //#endregion
 
 //#region ◆移除已解決的高度倒置訊息 [removeHeightInversionMessages]
-function removeHeightInversionMessages(building: BuildingPart, lowerFloorNo: number): void {
+function removeHeightInversionMessages(building: BuildingPart, lowerFloor: string): void {
   building.errorMessages = building.errorMessages.filter(
-    (m) => !(m.includes('樓層高度倒置') && m.includes(`${lowerFloorNo} 樓`)),
+    (m) => !(m.includes('樓層高度倒置') && m.includes(`${lowerFloor} 樓`)),
   );
 }
 //#endregion
@@ -549,18 +650,11 @@ function clearResolvedVerticalErrors(buildings: BuildingPart[]): void {
   }
 
   for (const group of byBuildingNo.values()) {
-    const sorted = group
-      .map((b) => ({ building: b, floorNo: parseFloorNumber(b.floor) }))
-      .filter((x): x is { building: BuildingPart; floorNo: number } => x.floorNo !== null)
-      .sort((a, b) => a.floorNo - b.floorNo);
+    const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
 
     for (let i = 0; i < sorted.length - 1; i++) {
-      const lowerEntry = sorted[i]!;
-      const upperEntry = sorted[i + 1]!;
-      if (upperEntry.floorNo - lowerEntry.floorNo !== 1) continue;
-
-      const lower = lowerEntry.building;
-      const upper = upperEntry.building;
+      const lower = sorted[i]!;
+      const upper = sorted[i + 1]!;
       const lowerBounds = getHeightBounds(lower);
       const upperBounds = getHeightBounds(upper);
       if (!lowerBounds || !upperBounds) continue;
@@ -568,21 +662,21 @@ function clearResolvedVerticalErrors(buildings: BuildingPart[]): void {
       const gap = upperBounds.minZ - lowerBounds.maxZ;
 
       if (gap >= -FLOOR_GAP_TOLERANCE) {
-        removeVerticalOverlapMessages(lower, upperEntry.floorNo);
-        removeVerticalOverlapMessages(upper, lowerEntry.floorNo);
+        removeVerticalOverlapMessages(lower, upper.floor);
+        removeVerticalOverlapMessages(upper, lower.floor);
       }
 
       if (gap <= MAX_FLOOR_GAP && gap >= -FLOOR_GAP_TOLERANCE) {
-        removeVerticalGapMessages(lower, upperEntry.floorNo);
-        removeVerticalGapMessages(upper, lowerEntry.floorNo);
+        removeVerticalGapMessages(lower, upper.floor);
+        removeVerticalGapMessages(upper, lower.floor);
       }
 
       if (upperBounds.minZ >= lowerBounds.minZ) {
-        removeHeightInversionMessages(upper, lowerEntry.floorNo);
+        removeHeightInversionMessages(upper, lower.floor);
       }
     }
 
-    for (const { building } of sorted) {
+    for (const building of sorted) {
       if (building.errorMessages.length === 0) {
         building.isFloating = false;
         building.isValid = true;
@@ -600,66 +694,78 @@ function clearResolvedVerticalErrors(buildings: BuildingPart[]): void {
  * @param selectedRowIds 使用者勾選的 rowId 集合
  */
 export function applyHorizontalDisplacementRepair(
-  buildings: BuildingPart[],
-  selectedRowIds: Set<string>,
-): { buildings: BuildingPart[]; fixedCount: number; skippedCount: number } {
+  buildings: BuildingPart[],    // 原始建物清單
+  selectedRowIds: Set<string>,  // 使用者勾選的 rowId 集合
+): { buildings: BuildingPart[]; // 修復後的建物清單
+  fixedCount: number;           // 成功對齊的樓層筆數
+  skippedCount: number;         // 無法對齊而跳過的筆數
+} {
+  // 複製建物清單，避免修改原始資料
   const result = buildings.map((b) => ({
-    ...b,
-    coordinates: cloneCoordinates(b.coordinates ?? []),
-    errorMessages: [...b.errorMessages],
-    fixMessages: [...b.fixMessages],
+    ...b, // 複製建物資料
+    coordinates: cloneCoordinates(b.coordinates ?? []), // 複製座標
+    errorMessages: [...b.errorMessages], // 複製錯誤訊息
+    fixMessages: [...b.fixMessages], // 複製修復訊息
   }));
 
   // 依建號分組，供查找參考樓層
+  // 建立一個 Map，以建號為 key，建物清單為 value，方便查找同建號的樓層
   const byBuildingNo = new Map<string, BuildingPart[]>();
   for (const b of result) {
-    const key = b.buildingNo || 'UNKNOWN_NO';
-    if (!byBuildingNo.has(key)) byBuildingNo.set(key, []);
-    byBuildingNo.get(key)!.push(b);
+    const key = b.buildingNo || 'UNKNOWN_NO'; // 建號為 UNKNOWN_NO 表示建號不存在
+    if (!byBuildingNo.has(key)) byBuildingNo.set(key, []); // 如果 Map 中沒有這個建號，則建立一個新的建物清單
+    byBuildingNo.get(key)!.push(b); // 將建物加入 Map 中
   }
 
-  let fixedCount = 0;
-  let skippedCount = 0;
+  let fixedCount = 0; // 成功對齊的樓層筆數
+  let skippedCount = 0; // 無法對齊而跳過的筆數
 
   for (const b of result) {
+    // 如果樓層不是浮空，或者 rowId 不存在，或者使用者沒有勾選，則跳過
     if (!b.isFloating || !b.rowId || !selectedRowIds.has(b.rowId)) continue;
+    // 如果樓層不是浮空，或者 rowId 不存在，或者使用者沒有勾選，則跳過
     if (!b.coordinates?.length) {
       skippedCount++;
-      continue;
+      continue; // 跳過
     }
-
     // 同建號內的非浮空樓層作為參考
-    const group = byBuildingNo.get(b.buildingNo || 'UNKNOWN_NO') ?? [];
+    const group = byBuildingNo.get(b.buildingNo || 'UNKNOWN_NO') ?? []; // 查找同建號的樓層
     const references = group.filter(
-      (ref) => ref.rowId !== b.rowId && !ref.isFloating && ref.coordinates?.length,
+      (ref) => ref.rowId !== b.rowId && !ref.isFloating && ref.coordinates?.length, // 過濾掉自己、浮空樓層和沒有座標的樓層
     );
-
+    // 如果沒有參考樓層，則跳過
     if (references.length === 0) {
       skippedCount++;
-      continue;
+      continue; // 跳過
     }
-
+    // 計算目標樓層的中心點
     const targetCentroid = getCentroid(b);
     if (!targetCentroid) {
       skippedCount++;
-      continue;
+      continue; // 跳過
     }
 
-    const targetRing = ringTo2D(b.coordinates[0] ?? []);
+    // 將座標轉換為 2D 環，計算面積
+    const targetRing = getFootprintRing(b);
+    // 計算面積
     const targetArea = polygonArea2D(targetRing);
+    // 如果面積小於等於 0，則跳過
     if (targetArea <= 0) {
       skippedCount++;
-      continue;
+      continue; // 跳過
     }
 
     // 遍歷參考樓層，找出重疊比例最高的平移方案
     let bestOverlap = 0;
+    // 最佳平移方案
     let bestShift: { dLon: number; dLat: number } | null = null;
+    // 最佳參考樓層
     let bestRefFloor = '';
 
+    // 遍歷參考樓層，計算重疊比例，找出最佳平移方案
     for (const ref of references) {
       const refCentroid = getCentroid(ref);
-      if (!refCentroid) continue;
+      if (!refCentroid) continue; // 如果參考樓層沒有中心點，則跳過
 
       const dLon = refCentroid.lon - targetCentroid.lon;
       const dLat = refCentroid.lat - targetCentroid.lat;
@@ -675,7 +781,7 @@ export function applyHorizontalDisplacementRepair(
       const shiftedRing = targetRing.map(
         ([lon, lat]) => [lon + dLon, lat + dLat] as [number, number],
       );
-      const refRing = ringTo2D(ref.coordinates![0] ?? []);
+      const refRing = getFootprintRing(ref);
       const overlap = polygonIntersectionArea(shiftedRing, refRing);
       const ratio = overlap / targetArea;
 
@@ -854,18 +960,11 @@ export function applyVerticalOverlapRepair(
   let skippedCount = 0;
 
   for (const group of byBuildingNo.values()) {
-    const sorted = group
-      .map((b) => ({ building: b, floorNo: parseFloorNumber(b.floor) }))
-      .filter((x): x is { building: BuildingPart; floorNo: number } => x.floorNo !== null)
-      .sort((a, b) => a.floorNo - b.floorNo);
+    const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
 
     for (let i = 0; i < sorted.length - 1; i++) {
-      const lowerEntry = sorted[i]!;
-      const upperEntry = sorted[i + 1]!;
-      if (upperEntry.floorNo - lowerEntry.floorNo !== 1) continue;
-
-      const lower = lowerEntry.building;
-      const upper = upperEntry.building;
+      const lower = sorted[i]!;
+      const upper = sorted[i + 1]!;
       const lowerBounds = getHeightBounds(lower);
       const upperBounds = getHeightBounds(upper);
       if (!lowerBounds || !upperBounds) continue;
@@ -916,17 +1015,18 @@ export function applyVerticalOverlapRepair(
  * 順序：水平 → 垂直重疊 → 垂直堆疊
  */
 export function applyDisplacementRepair(
-  buildings: BuildingPart[],
-  selectedRowIds: Set<string>,
-  options: DisplacementRepairOptions,
+  buildings: BuildingPart[],          // 原始建物清單
+  selectedRowIds: Set<string>,        // 使用者勾選的 rowId 集合
+  options: DisplacementRepairOptions, // 位移修正選項
 ): {
-  buildings: BuildingPart[];
-  fixedCount: number;
-  skippedCount: number;
-  horizontalFixedCount: number;
-  verticalFixedCount: number;
-  verticalOverlapFixedCount: number;
+  buildings: BuildingPart[];         // 修復後的建物清單
+  fixedCount: number;                // 成功對齊的樓層筆數
+  skippedCount: number;              // 無法對齊而跳過的筆數
+  horizontalFixedCount: number;      // 水平位移修正：成功對齊的樓層筆數
+  verticalFixedCount: number;        // 垂直位移修正：成功對齊的樓層筆數
+  verticalOverlapFixedCount: number; // 垂直重疊修正：成功對齊的樓層筆數
 } {
+  // 如果沒有選擇任何修正選項，則直接返回原始建物清單
   if (!options.horizontal && !options.vertical && !options.verticalOverlap) {
     return {
       buildings,
@@ -938,40 +1038,62 @@ export function applyDisplacementRepair(
     };
   }
 
-  let current = buildings;
-  let horizontalFixedCount = 0;
-  let verticalFixedCount = 0;
-  let verticalOverlapFixedCount = 0;
-  let skippedCount = 0;
+  let current = buildings;           // 修復後的建物清單
+  let horizontalFixedCount = 0;      // 水平位移修正：成功對齊的樓層筆數
+  let verticalFixedCount = 0;        // 垂直位移修正：成功對齊的樓層筆數
+  let verticalOverlapFixedCount = 0; // 垂直重疊修正：成功對齊的樓層筆數
+  let skippedCount = 0;              // 無法對齊而跳過的筆數
 
+  // 水平位移修正
   if (options.horizontal) {
+    // 執行水平位移修正
     const horizontalResult = applyHorizontalDisplacementRepair(current, selectedRowIds);
+    // 更新修復後的建物清單
     current = horizontalResult.buildings;
+    // 更新水平位移修正：成功對齊的樓層筆數
     horizontalFixedCount = horizontalResult.fixedCount;
+    // 更新無法對齊而跳過的筆數
     skippedCount += horizontalResult.skippedCount;
   }
 
+  // 垂直重疊修正
   if (options.verticalOverlap) {
+    // 執行垂直重疊修正
     const overlapResult = applyVerticalOverlapRepair(current, selectedRowIds);
+    // 更新修復後的建物清單
     current = overlapResult.buildings;
+    // 更新垂直重疊修正：成功對齊的樓層筆數
     verticalOverlapFixedCount = overlapResult.fixedCount;
+    // 更新無法對齊而跳過的筆數
     skippedCount += overlapResult.skippedCount;
   }
 
+  // 垂直位移修正
   if (options.vertical) {
+    // 執行垂直位移修正
     const verticalResult = applyVerticalDisplacementRepair(current, selectedRowIds);
+    // 更新修復後的建物清單
     current = verticalResult.buildings;
+    // 更新垂直位移修正：成功對齊的樓層筆數
     verticalFixedCount = verticalResult.fixedCount;
+    // 更新無法對齊而跳過的筆數
     skippedCount += verticalResult.skippedCount;
+    // 清除已解決的垂直錯誤
     clearResolvedVerticalErrors(current);
   }
-
+  // 返回修復結果
   return {
+    // 修復後的建物清單
     buildings: current,
+    // 成功對齊的樓層筆數
     fixedCount: horizontalFixedCount + verticalFixedCount + verticalOverlapFixedCount,
+    // 無法對齊而跳過的筆數
     skippedCount,
+    // 水平位移修正：成功對齊的樓層筆數
     horizontalFixedCount,
+    // 垂直位移修正：成功對齊的樓層筆數
     verticalFixedCount,
+    // 垂直重疊修正：成功對齊的樓層筆數
     verticalOverlapFixedCount,
   };
 }

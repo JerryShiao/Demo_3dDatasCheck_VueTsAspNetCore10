@@ -140,30 +140,19 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// </summary>
         private static List<BuildingData> ProcessGeoJsonFeatures(JsonElement features)
         {
-            var buildings = new List<BuildingData>();
-            foreach (var feature in features.EnumerateArray())
-            {
-                if (!feature.TryGetProperty("properties", out var props))
+            var drafts = GeoJsonSolidInflator.ProcessFeatures(features);
+            var buildings = drafts
+                .Select(draft => ValidateAndFix(new BuildingData
                 {
-                    continue;
-                }
+                    Mid = draft.Mid,
+                    Oid = draft.Oid,
+                    BuildingNo = draft.BuildingNo,
+                    Floor = draft.Floor,
+                    BoundedByRaw = draft.BoundedByRaw,
+                }))
+                .ToList();
 
-                var boundedBy = "";
-                if (feature.TryGetProperty("geometry", out var geometry) &&
-                    geometry.TryGetProperty("coordinates", out var coordinates))
-                {
-                    boundedBy = coordinates.GetRawText();
-                }
-
-                buildings.Add(ValidateAndFix(new BuildingData
-                {
-                    Mid = GetJsonPropertyAsString(props, "MID"),
-                    Oid = GetJsonPropertyAsString(props, "OID"),
-                    BuildingNo = GetJsonPropertyAsString(props, "建號母號"),
-                    Floor = GetJsonPropertyAsString(props, "層次"),
-                    BoundedByRaw = boundedBy
-                }));
-            }
+            GeoJsonSolidInflator.ApplyInflateFixMessages(drafts, buildings);
             return buildings;
         }
 
@@ -208,19 +197,21 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             // 對每個建物群組進行跨樓層檢測
             foreach (var group in groups)
             {
-                // 將建物群組按層次排序
+                // 將建物群組按層次排序（支援 B1 / 001 / R01 等命名）
                 var floors = group
-                    .Select(b => new { Building = b, FloorNo = ParseFloorNumber(b.Floor) }) // 解析層次為數字
-                    .Where(x => x.FloorNo.HasValue) // 過濾出有效層次
-                    .OrderBy(x => x.FloorNo!.Value) // 按層次排序
+                    .OrderBy(b => b.Floor, Comparer<string>.Create(GeoJsonFloorOrdering.Compare))
                     .ToList();
 
                 // 逐層檢測相鄰樓層的高度差異
                 for (var i = 1; i < floors.Count; i++)
                 {
-                    var prev = floors[i - 1].Building; // 前一層建物
-                    var curr = floors[i].Building;     // 當前層建物
-                    CompareAdjacentFloors(prev, curr, floors[i - 1].FloorNo!.Value, floors[i].FloorNo!.Value); // 檢測相鄰樓層
+                    var prev = floors[i - 1];
+                    var curr = floors[i];
+                    CompareAdjacentFloors(
+                        prev,
+                        curr,
+                        GeoJsonFloorOrdering.GetDisplayLabel(prev.Floor),
+                        GeoJsonFloorOrdering.GetDisplayLabel(curr.Floor));
                 }
             }
         }
@@ -254,11 +245,11 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 MarkFloating(dto, $"樓層高度異常偏高（{height:F1}m，高於 {MaxFloorHeight}m）");
             }
 
-            // 檢測樓層底部高度是否低於地面層底部高度閾值
-            var floorNo = ParseFloorNumber(dto.Floor);
-
-            // 如果樓層號碼解析成功，則進行地面層底部高度檢測
-            if (floorNo == 1 && dto.MinHeight.Value > GroundFloorBottomThreshold)
+            // 僅一般地上 1 樓進行地面層底部高度檢測（排除 R01 / B1 等特殊樓層）
+            var floorKey = GeoJsonFloorOrdering.Parse(dto.Floor);
+            if (floorKey.Category == GeoJsonFloorOrdering.FloorCategory.Regular
+                && floorKey.Number == 1
+                && dto.MinHeight.Value > GroundFloorBottomThreshold)
             {
                 // 樓層底部高度異常，標記為浮空
                 MarkFloating(dto, $"疑似浮空：1 樓底部高度 {dto.MinHeight.Value:F1}m，離地超過 {GroundFloorBottomThreshold}m");
@@ -275,10 +266,10 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// <param name="lowerFloorNo">前一層樓層號碼</param>
         /// <param name="upperFloorNo">當前層樓層號碼</param>
         private static void CompareAdjacentFloors(
-            BuildingData lowerFloor, // 前一層建物
-            BuildingData upperFloor, // 當前層建物
-            int lowerFloorNo,        // 前一層樓層號碼
-            int upperFloorNo)        // 當前層樓層號碼
+            BuildingData lowerFloor,
+            BuildingData upperFloor,
+            string lowerFloorLabel,
+            string upperFloorLabel)
         {
             // 計算樓層高度差
             var gap = upperFloor.MinHeight!.Value - lowerFloor.MaxHeight!.Value;
@@ -288,29 +279,28 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             {
                 // 樓層高度差異過大，標記為垂直斷層
                 MarkFloating(lowerFloor,
-                    $"與 {upperFloorNo} 樓之間垂直斷層（落差 {gap:F1}m，超過 {MaxFloorGap}m）");
+                    $"與 {upperFloorLabel} 樓之間垂直斷層（落差 {gap:F1}m，超過 {MaxFloorGap}m）");
 
                 // 標記上層建物為垂直斷層
                 MarkFloating(upperFloor,
-                    $"與 {lowerFloorNo} 樓之間垂直斷層（落差 {gap:F1}m，超過 {MaxFloorGap}m）");
+                    $"與 {lowerFloorLabel} 樓之間垂直斷層（落差 {gap:F1}m，超過 {MaxFloorGap}m）");
             }
             // 高度差 < 層間高度容許誤差，則標記為垂直重疊
             else if (gap < -FloorGapTolerance)
             {
                 // 樓層高度差異過小，標記為垂直重疊
                 MarkFloating(lowerFloor,
-                    $"與 {upperFloorNo} 樓垂直重疊（重疊 {Math.Abs(gap):F1}m）");
+                    $"與 {upperFloorLabel} 樓垂直重疊（重疊 {Math.Abs(gap):F1}m）");
 
                 // 標記上層建物為垂直重疊
                 MarkFloating(upperFloor,
-                    $"與 {lowerFloorNo} 樓垂直重疊（重疊 {Math.Abs(gap):F1}m）");
+                    $"與 {lowerFloorLabel} 樓垂直重疊（重疊 {Math.Abs(gap):F1}m）");
             }
 
-            // 如果樓層號碼差大於 1，則標記為浮空
             if (upperFloor.MinHeight!.Value < lowerFloor.MinHeight!.Value)
             {
                 MarkFloating(upperFloor,
-                    $"樓層高度倒置：{upperFloorNo} 樓底部低於 {lowerFloorNo} 樓");
+                    $"樓層高度倒置：{upperFloorLabel} 樓底部低於 {lowerFloorLabel} 樓");
             }
         }
         #endregion
