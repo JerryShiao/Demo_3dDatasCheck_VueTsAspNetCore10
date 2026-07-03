@@ -477,10 +477,10 @@
    * 建物狀態類型
    */
   function getBuildingCategory(b: BuildingPart): BuildingCategory {
-    if (b.isFloating) return 'abnormal';
-    if (b.isFixed) return 'fixed';
-    if (b.isValid) return 'normal';
-    return 'error';
+    if (b.isFloating) return 'abnormal'; // 浮動建物
+    if (b.isFixed) return 'fixed';       // 固定建物
+    if (b.isValid) return 'normal';      // 正常建物
+    return 'error';                      // 錯誤建物
   }
   //#endregion
 
