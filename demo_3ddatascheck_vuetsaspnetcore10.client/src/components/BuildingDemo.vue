@@ -63,6 +63,7 @@
   import BuildingCheckDialog from './BuildingCheckDialog.vue';
   import { applyBuildingRepair } from '../utils/buildingRepair.ts';
   import type { RepairRequest } from '../utils/buildingRepair.ts';
+  import { loadBuildingDetectionConfig } from '../utils/buildingDetectionConfig.ts';
 
   // 套件
   import Swal from 'sweetalert2';
@@ -81,6 +82,8 @@
   //【生命週期】===================================================================
   // 在組件掛載後執行
   onMounted(async () => {
+    await loadBuildingDetectionConfig();
+
     const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN;
     if (ionToken) {
       Cesium.Ion.defaultAccessToken = ionToken;

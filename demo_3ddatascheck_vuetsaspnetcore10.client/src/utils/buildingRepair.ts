@@ -3,6 +3,7 @@
  * 提供「缺漏樓層補齊」與「位移修正」（水平對齊參考樓層）兩種修復模式
  */
 import type { BuildingPart } from '../types/BuildingPart.ts';
+import { getFloorGapTolerance, getMaxFloorGap } from './buildingDetectionConfig.ts';
 
 //【型別定義】===================================================================
 /** 修正模式：gapRepair = 缺漏樓層補齊；displacement = 位移修正 */
@@ -50,12 +51,6 @@ const MAX_SHIFT_METERS = 100;
 
 /** 缺漏樓層補齊：無法從上下樓層推算高度時，預設每層高度（公尺） */
 const DEFAULT_FLOOR_HEIGHT = 3.0;
-
-/** 垂直連續性：層間高度容許誤差（公尺），與後端 FloorGapTolerance 一致 */
-const FLOOR_GAP_TOLERANCE = 0.5;
-
-/** 垂直連續性：最大合理層高（公尺），與後端 MaxFloorGap 一致 */
-const MAX_FLOOR_GAP = 3.0;
 
 //【公開方法】===================================================================
 
@@ -661,12 +656,12 @@ function clearResolvedVerticalErrors(buildings: BuildingPart[]): void {
 
       const gap = upperBounds.minZ - lowerBounds.maxZ;
 
-      if (gap >= -FLOOR_GAP_TOLERANCE) {
+      if (gap >= -getFloorGapTolerance()) {
         removeVerticalOverlapMessages(lower, upper.floor);
         removeVerticalOverlapMessages(upper, lower.floor);
       }
 
-      if (gap <= MAX_FLOOR_GAP && gap >= -FLOOR_GAP_TOLERANCE) {
+      if (gap <= getMaxFloorGap() && gap >= -getFloorGapTolerance()) {
         removeVerticalGapMessages(lower, upper.floor);
         removeVerticalGapMessages(upper, lower.floor);
       }
@@ -969,7 +964,7 @@ export function applyVerticalOverlapRepair(
       if (!lowerBounds || !upperBounds) continue;
 
       const gap = upperBounds.minZ - lowerBounds.maxZ;
-      if (gap >= -FLOOR_GAP_TOLERANCE) continue;
+      if (gap >= -getFloorGapTolerance()) continue;
 
       const upperSelected = Boolean(
         upper.isAbnormal && upper.rowId && selectedRowIds.has(upper.rowId),

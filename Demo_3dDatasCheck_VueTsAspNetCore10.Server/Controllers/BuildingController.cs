@@ -1,5 +1,7 @@
-﻿using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services;
+﻿using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Options;
+using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
 {
@@ -18,11 +20,19 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
         /// HTTP 客戶端
         /// </summary>
         private readonly HttpClient _httpClient;
+        /// <summary>
+        /// 異常檢測閾值設定
+        /// </summary>
+        private readonly BuildingAbnormalDetectionOptions _detectionOptions;
 
-        public BuildingController(BuildingProcessorService processorService, HttpClient httpClient)
+        public BuildingController(
+            BuildingProcessorService processorService,
+            HttpClient httpClient,
+            IOptions<BuildingAbnormalDetectionOptions> detectionOptions)
         {
             _processorService = processorService;   // 建物資料處理服務
             _httpClient = httpClient; // HTTP 客戶端
+            _detectionOptions = detectionOptions.Value;
         }
 
         #region ◆匯入本地檔案（支援 XML 或 JSON） [ImportFile]
@@ -97,6 +107,17 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
             {
                 return Ok(new { success = false, message = $"連線失敗: {ex.Message}" });
             }
+        }
+        #endregion
+
+        #region ◆取得異常檢測閾值設定 [GetDetectionSettings]
+        /// <summary>
+        /// 取得異常檢測閾值設定（供前端同步使用）
+        /// </summary>
+        [HttpGet("detection-settings")]
+        public IActionResult GetDetectionSettings()
+        {
+            return Ok(_detectionOptions);
         }
         #endregion
 

@@ -1,3 +1,4 @@
+using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Options;
 using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services;
 using Scalar.AspNetCore;
 
@@ -8,6 +9,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+
+builder.Services.Configure<BuildingAbnormalDetectionOptions>(
+    builder.Configuration.GetSection(BuildingAbnormalDetectionOptions.SectionName));
 
 builder.Services.AddHttpClient(); // 注入 HttpClient 服務
 builder.Services.AddSingleton<BuildingProcessorService>(); // 注入建物資料處理服務（單例）

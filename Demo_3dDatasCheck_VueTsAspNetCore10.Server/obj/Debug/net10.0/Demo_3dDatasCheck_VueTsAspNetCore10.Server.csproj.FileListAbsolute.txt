@@ -28,7 +28,6 @@ D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore1
 D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\staticwebassets.development.json
 D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\staticwebassets.build.endpoints.json
 D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\swae.build.ex.cache
-D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\staticwebassets.upToDateCheck.txt
 D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\Demo_3dD.DCECD343.Up2Date
 D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.dll
 D:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\Demo_3dDatasCheck_VueTsAspNetCore10.Server\obj\Debug\net10.0\refint\Demo_3dDatasCheck_VueTsAspNetCore10.Server.dll

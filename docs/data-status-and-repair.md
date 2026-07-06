@@ -5,7 +5,11 @@
 
 相關實作主要分布於：
 
+- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/appsettings.json`（異常檢測閾值設定）
+- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Options/BuildingAbnormalDetectionOptions.cs`
 - `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Services/BuildingProcessorService.cs`
+- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Controllers/BuildingController.cs`（`GET /api/building/detection-settings`）
+- `demo_3ddatascheck_vuetsaspnetcore10.client/src/utils/buildingDetectionConfig.ts`
 - `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/BuildingCheckDialog.vue`
 - `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/BuildingDemo.vue`
 - `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/DataRepairDialog.vue`
@@ -59,15 +63,23 @@
 `異常` 對應 `isAbnormal = true`，涵蓋多種垂直幾何異常，包含離地浮空、樓層高度異常、垂直斷層、垂直重疊與樓層高度倒置。
 
 #### 後端會標記為異常的情況
-後端在 `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Services/BuildingProcessorService.cs` 中，透過 `DetectAbnormalIssues()` 呼叫以下檢測：
+後端在 `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Services/BuildingProcessorService.cs` 中，透過 `DetectAbnormalIssues()` 呼叫以下檢測。閾值由 `appsettings.json` 的 `BuildingAbnormalDetection` 區段設定，並經 `BuildingAbnormalDetectionOptions` 注入服務（修改設定後需重啟後端才會生效）。
+
+| 設定鍵 | 預設值 | 用途 |
+| --- | --- | --- |
+| `MinFloorHeight` | `2.0` m | 單層高度下限 |
+| `MaxFloorHeight` | `8.0` m | 單層高度上限 |
+| `GroundFloorBottomThreshold` | `5.0` m | 一般 1 樓底部離地容許上限（疑似浮空） |
+| `MaxFloorGap` | `3.0` m | 相鄰樓層垂直斷層落差上限 |
+| `FloorGapTolerance` | `0.5` m | 相鄰樓層垂直重疊容許量 |
 
 - `DetectSinglePartAbnormal()`
-  - 樓層高度低於 `2.0m`
-  - 樓層高度高於 `8.0m`
-  - 一般 1 樓底部高度高於 `5.0m`
+  - 樓層高度低於 `MinFloorHeight`
+  - 樓層高度高於 `MaxFloorHeight`
+  - 一般 1 樓底部高度高於 `GroundFloorBottomThreshold`
 - `CompareAdjacentFloors()`
-  - 相鄰樓層落差大於 `3.0m`，標記為垂直斷層
-  - 相鄰樓層重疊超過 `0.5m`，標記為垂直重疊
+  - 相鄰樓層落差大於 `MaxFloorGap`，標記為垂直斷層
+  - 相鄰樓層重疊超過 `FloorGapTolerance`，標記為垂直重疊
   - 上層底部低於下層底部，標記為樓層高度倒置
 
 上述情況都會透過 `MarkAbnormal()`：
@@ -79,7 +91,7 @@
 #### 前端會補充標記為異常的情況
 前端在 `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/BuildingDemo.vue` 的 `detectTerrainAbnormal()` 中，會使用 Cesium 地形取樣補做一次判斷：
 
-- 若 `建物最低高程 - 地形高度 > 3.0m`
+- 若 `建物最低高程 - 地形高度 > 3.0m`（此值目前仍為前端常數 `GROUND_FLOAT_TOLERANCE`，與後端 `BuildingAbnormalDetection` 無關）
 - 則由 `markTerrainAbnormal()` 將該筆資料標記為異常
 
 此時也會：
@@ -124,7 +136,9 @@
 
 ```mermaid
 flowchart TD
-    importData[匯入資料] --> backendParse[後端解析與 ValidateAndFix]
+    appStart[前端頁面載入] --> loadConfig[loadBuildingDetectionConfig]
+    loadConfig --> importData[匯入資料]
+    importData --> backendParse[後端解析與 ValidateAndFix]
     backendParse --> backendDetect[後端 DetectAbnormalIssues]
     backendDetect --> clientLoad[前端 loadDataToMap]
     clientLoad --> terrainDetect[前端 detectTerrainAbnormal]
@@ -134,6 +148,15 @@ flowchart TD
     applyRepair --> terrainRecheck[修復後再次 detectTerrainAbnormal]
     terrainRecheck --> rerender[更新列表與 3D 圖台]
 ```
+
+### 3.1 異常檢測閾值同步
+後端與前端修復邏輯共用的垂直連續性閾值（`FloorGapTolerance`、`MaxFloorGap` 等）以 `appsettings.json` 為單一來源：
+
+1. 後端啟動時透過 `IOptions<BuildingAbnormalDetectionOptions>` 綁定 `BuildingAbnormalDetection` 區段
+2. 前端在 `BuildingDemo.vue` 的 `onMounted` 呼叫 `loadBuildingDetectionConfig()`，向 `GET /api/building/detection-settings` 取得並快取設定
+3. `buildingRepair.ts` 的 `clearResolvedVerticalErrors()`、`applyVerticalOverlapRepair()` 等透過 getter 讀取快取值；API 失敗時使用與後端相同的內建預設值
+
+調整閾值時，請修改 `Demo_3dDatasCheck_VueTsAspNetCore10.Server/appsettings.json` 後重啟後端，並重新載入前端頁面即可同步。
 
 ## 4. 資料修復邏輯
 
@@ -256,7 +279,7 @@ flowchart TD
 處理方式如下：
 
 1. 依建號分組並按樓層排序
-2. 逐組檢查相鄰樓層是否出現 `gap < -0.5m`
+2. 逐組檢查相鄰樓層是否出現 `gap < -FloorGapTolerance`（閾值與後端 `BuildingAbnormalDetection.FloorGapTolerance` 同步，預設 `-0.5m`）
 3. 若上層為已選取異常樓層，則上移上層使其底部貼齊下層頂部
 4. 否則若下層為已選取異常樓層，則下移下層使其頂部貼齊上層底部
 
@@ -289,7 +312,7 @@ flowchart TD
 最後同樣會由 `clearResolvedVerticalErrors()` 重新檢查並清除已解決的垂直異常。
 
 ### 6.6 清除已解決垂直異常
-`clearResolvedVerticalErrors()` 會重新檢查同建號相鄰樓層的垂直關係，並在條件滿足時移除以下訊息：
+`clearResolvedVerticalErrors()` 會重新檢查同建號相鄰樓層的垂直關係，並依 `FloorGapTolerance`、`MaxFloorGap`（來自 `buildingDetectionConfig`）判斷是否可移除以下訊息：
 
 - `垂直重疊`
 - `垂直斷層`

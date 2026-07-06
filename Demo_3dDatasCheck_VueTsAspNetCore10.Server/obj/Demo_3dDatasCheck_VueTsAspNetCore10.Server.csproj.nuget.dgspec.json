@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj": {}
+    "d:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj": {}
   },
   "projects": {
-    "D:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj": {
+    "d:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj",
+        "projectUniqueName": "d:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj",
         "projectName": "Demo_3dDatasCheck_VueTsAspNetCore10.Server",
-        "projectPath": "D:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj",
-        "packagesPath": "C:\\Users\\2600243.SYSTEX\\.nuget\\packages\\",
-        "outputPath": "D:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\obj\\",
+        "projectPath": "d:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj",
+        "packagesPath": "C:\\Users\\2600243.SYSTEX\\AppData\\Local\\Temp\\cursor-sandbox-cache\\276dabba02a146e8405f875d654d37fc\\nuget",
+        "outputPath": "d:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"

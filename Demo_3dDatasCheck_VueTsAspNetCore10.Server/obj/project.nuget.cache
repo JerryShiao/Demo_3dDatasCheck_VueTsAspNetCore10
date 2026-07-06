@@ -1,13 +1,13 @@
 {
   "version": 2,
-  "dgSpecHash": "zaamGt2ifnY=",
+  "dgSpecHash": "rhqpvoRoD0w=",
   "success": true,
-  "projectFilePath": "D:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj",
+  "projectFilePath": "d:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj",
   "expectedPackageFiles": [
-    "C:\\Users\\2600243.SYSTEX\\.nuget\\packages\\microsoft.aspnetcore.openapi\\10.0.9\\microsoft.aspnetcore.openapi.10.0.9.nupkg.sha512",
-    "C:\\Users\\2600243.SYSTEX\\.nuget\\packages\\microsoft.aspnetcore.spaproxy\\10.0.9\\microsoft.aspnetcore.spaproxy.10.0.9.nupkg.sha512",
-    "C:\\Users\\2600243.SYSTEX\\.nuget\\packages\\microsoft.openapi\\2.9.0\\microsoft.openapi.2.9.0.nupkg.sha512",
-    "C:\\Users\\2600243.SYSTEX\\.nuget\\packages\\scalar.aspnetcore\\2.16.7\\scalar.aspnetcore.2.16.7.nupkg.sha512"
+    "C:\\Users\\2600243.SYSTEX\\AppData\\Local\\Temp\\cursor-sandbox-cache\\276dabba02a146e8405f875d654d37fc\\nuget\\microsoft.aspnetcore.openapi\\10.0.9\\microsoft.aspnetcore.openapi.10.0.9.nupkg.sha512",
+    "C:\\Users\\2600243.SYSTEX\\AppData\\Local\\Temp\\cursor-sandbox-cache\\276dabba02a146e8405f875d654d37fc\\nuget\\microsoft.aspnetcore.spaproxy\\10.0.9\\microsoft.aspnetcore.spaproxy.10.0.9.nupkg.sha512",
+    "C:\\Users\\2600243.SYSTEX\\AppData\\Local\\Temp\\cursor-sandbox-cache\\276dabba02a146e8405f875d654d37fc\\nuget\\microsoft.openapi\\2.9.0\\microsoft.openapi.2.9.0.nupkg.sha512",
+    "C:\\Users\\2600243.SYSTEX\\AppData\\Local\\Temp\\cursor-sandbox-cache\\276dabba02a146e8405f875d654d37fc\\nuget\\scalar.aspnetcore\\2.16.7\\scalar.aspnetcore.2.16.7.nupkg.sha512"
   ],
   "logs": []
 }

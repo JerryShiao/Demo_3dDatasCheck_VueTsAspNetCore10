@@ -1,4 +1,6 @@
 ﻿using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Models;
+using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Options;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Xml.Linq;
 
@@ -14,29 +16,12 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         private static readonly XNamespace XmlNs =
             "http://schemas.datacontract.org/2004/07/ModelOfBuilding_WebAPI.Models";
 
-        #region -- 異常檢測閾值（公尺）
-        /// <summary>
-        /// 地面層底部高度閾值
-        /// </summary>
-        private const double GroundFloorBottomThreshold = 5.0;
-        /// <summary>
-        /// 層間高度容許誤差（公尺）
-        /// </summary>
-        private const double FloorGapTolerance = 0.5;
-        /// <summary>
-        /// 最大合理層間高度（公尺）
-        /// </summary>
-        private const double MaxFloorGap = 3.0;
-        /// <summary>
-        /// 最小合理層高（公尺）
-        /// </summary>
-        private const double MinFloorHeight = 2.0;
-        /// <summary>
-        /// 最大合理層高（公尺）
-        /// </summary>
-        private const double MaxFloorHeight = 8.0;
-        #endregion
+        private readonly BuildingAbnormalDetectionOptions _detection;
 
+        public BuildingProcessorService(IOptions<BuildingAbnormalDetectionOptions> detectionOptions)
+        {
+            _detection = detectionOptions.Value;
+        }
         #region ◆依內容格式自動選擇 XML 或 JSON 解析 [ProcessContent]
         /// <summary>
         /// 依內容格式自動選擇 XML 或 JSON 解析
@@ -180,7 +165,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// <summary>
         /// 批次檢測垂直幾何異常：單樓層高度合理性與跨樓層垂直連續性
         /// </summary>
-        private static void DetectAbnormalIssues(List<BuildingData> buildings)
+        private void DetectAbnormalIssues(List<BuildingData> buildings)
         {
             // 對每個建物進行檢測
             foreach (var dto in buildings)
@@ -222,7 +207,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// 單樓層高度合理性檢測
         /// </summary>
         /// <param name="dto">建物資料</param>
-        private static void DetectSinglePartAbnormal(BuildingData dto)
+        private void DetectSinglePartAbnormal(BuildingData dto)
         {
             // 如果最小高度或最大高度為 null，則無法進行檢測
             if (!dto.MinHeight.HasValue || !dto.MaxHeight.HasValue)
@@ -234,25 +219,25 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             var height = dto.MaxHeight.Value - dto.MinHeight.Value;
 
             // 檢測樓層高度是否低於最小合理層高
-            if (height < MinFloorHeight)
+            if (height < _detection.MinFloorHeight)
             {
-                MarkAbnormal(dto, $"樓層高度異常偏低（{height:F1}m，低於 {MinFloorHeight}m）");
+                MarkAbnormal(dto, $"樓層高度異常偏低（{height:F1}m，低於 {_detection.MinFloorHeight}m）");
             }
 
             // 檢測樓層高度是否高於最大合理層高
-            else if (height > MaxFloorHeight)
+            else if (height > _detection.MaxFloorHeight)
             {
-                MarkAbnormal(dto, $"樓層高度異常偏高（{height:F1}m，高於 {MaxFloorHeight}m）");
+                MarkAbnormal(dto, $"樓層高度異常偏高（{height:F1}m，高於 {_detection.MaxFloorHeight}m）");
             }
 
             // 僅一般地上 1 樓進行地面層底部高度檢測（排除 R01 / B1 等特殊樓層）
             var floorKey = GeoJsonFloorOrdering.Parse(dto.Floor);
             if (floorKey.Category == GeoJsonFloorOrdering.FloorCategory.Regular
                 && floorKey.Number == 1
-                && dto.MinHeight.Value > GroundFloorBottomThreshold)
+                && dto.MinHeight.Value > _detection.GroundFloorBottomThreshold)
             {
                 // 樓層底部高度異常，標記為異常
-                MarkAbnormal(dto, $"疑似浮空：1 樓底部高度 {dto.MinHeight.Value:F1}m，離地超過 {GroundFloorBottomThreshold}m");
+                MarkAbnormal(dto, $"疑似浮空：1 樓底部高度 {dto.MinHeight.Value:F1}m，離地超過 {_detection.GroundFloorBottomThreshold}m");
             }
         }
         #endregion
@@ -265,7 +250,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// <param name="upperFloor">當前層建物</param>
         /// <param name="lowerFloorNo">前一層樓層號碼</param>
         /// <param name="upperFloorNo">當前層樓層號碼</param>
-        private static void CompareAdjacentFloors(
+        private void CompareAdjacentFloors(
             BuildingData lowerFloor,
             BuildingData upperFloor,
             string lowerFloorLabel,
@@ -275,18 +260,18 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             var gap = upperFloor.MinHeight!.Value - lowerFloor.MaxHeight!.Value;
 
             // 樓層高度差 > 最大合理層高，標記為垂直斷層
-            if (gap > MaxFloorGap)
+            if (gap > _detection.MaxFloorGap)
             {
                 // 樓層高度差異過大，標記為垂直斷層
                 MarkAbnormal(lowerFloor,
-                    $"與 {upperFloorLabel} 樓之間垂直斷層（落差 {gap:F1}m，超過 {MaxFloorGap}m）");
+                    $"與 {upperFloorLabel} 樓之間垂直斷層（落差 {gap:F1}m，超過 {_detection.MaxFloorGap}m）");
 
                 // 標記上層建物為垂直斷層
                 MarkAbnormal(upperFloor,
-                    $"與 {lowerFloorLabel} 樓之間垂直斷層（落差 {gap:F1}m，超過 {MaxFloorGap}m）");
+                    $"與 {lowerFloorLabel} 樓之間垂直斷層（落差 {gap:F1}m，超過 {_detection.MaxFloorGap}m）");
             }
             // 高度差 < 層間高度容許誤差，則標記為垂直重疊
-            else if (gap < -FloorGapTolerance)
+            else if (gap < -_detection.FloorGapTolerance)
             {
                 // 樓層高度差異過小，標記為垂直重疊
                 MarkAbnormal(lowerFloor,
