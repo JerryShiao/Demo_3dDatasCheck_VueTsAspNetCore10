@@ -129,8 +129,9 @@
 
 - `缺漏樓層補齊：已補齊缺漏樓層`
 - `位移修補：已水平對齊參考樓層`
-- `位移修補：已垂直對齊鄰層`
+- `相鄰水平修補：已水平對齊下層`
 - `垂直重疊修補：已上移對齊下層`
+- `位移修補：已垂直對齊鄰層`
 
 ## 3. 狀態判斷流程
 
@@ -154,7 +155,7 @@ flowchart TD
 
 1. 後端啟動時透過 `IOptions<BuildingAbnormalDetectionOptions>` 綁定 `BuildingAbnormalDetection` 區段
 2. 前端在 `BuildingDemo.vue` 的 `onMounted` 呼叫 `loadBuildingDetectionConfig()`，向 `GET /api/building/detection-settings` 取得並快取設定
-3. `buildingRepair.ts` 的 `clearResolvedVerticalErrors()`、`applyVerticalOverlapRepair()` 等透過 getter 讀取快取值；API 失敗時使用與後端相同的內建預設值
+3. `buildingRepair.ts` 的 `clearResolvedVerticalErrors()`、`applyAdjacentFloorHorizontalAlignment()`、`applyVerticalOverlapRepair()` 等透過 getter 讀取快取值；API 失敗時使用與後端相同的內建預設值
 
 調整閾值時，請修改 `Demo_3dDatasCheck_VueTsAspNetCore10.Server/appsettings.json` 後重啟後端，並重新載入前端頁面即可同步。
 
@@ -187,8 +188,9 @@ flowchart TD
 - `selectedRowIds`：使用者勾選的樓層
 - `maxMissingFloors`：缺漏樓層補齊時允許補齊的缺漏層數上限
 - `horizontalCorrection`：位移修正是否啟用水平修正
+- `adjacentFloorHorizontalCorrection`：位移修正是否啟用相鄰樓層水平對齊（僅經緯度）
+- `verticalOverlapCorrection`：位移修正是否啟用垂直重疊修正（僅 Z 軸）
 - `verticalCorrection`：位移修正是否啟用垂直修正
-- `verticalOverlapCorrection`：位移修正是否啟用垂直重疊修正
 
 ## 5. 缺漏樓層補齊邏輯
 
@@ -243,6 +245,7 @@ flowchart TD
 位移修正對應 `applyDisplacementRepair()`，用來處理已標記為異常的樓層位置偏移問題。它可以依使用者勾選，分別執行：
 
 - 水平修正
+- 相鄰樓層水平對齊
 - 垂直重疊修正
 - 垂直修正
 
@@ -250,10 +253,11 @@ flowchart TD
 `applyDisplacementRepair()` 固定依下列順序執行：
 
 1. 水平修正
-2. 垂直重疊修正
-3. 垂直修正
+2. 相鄰樓層水平對齊
+3. 垂直重疊修正
+4. 垂直修正
 
-這個順序的目的是先調整平面位置，再解決相鄰樓層的重疊與堆疊問題。
+建議以資料可信度為優先時，分步勾選並檢視每步結果；若懷疑平面偏移，先做水平或相鄰樓層水平對齊，再視需要做垂直重疊或垂直修正。
 
 ### 6.3 水平修正
 水平修正由 `applyHorizontalDisplacementRepair()` 執行，邏輯如下：
@@ -273,7 +277,26 @@ flowchart TD
 - 設定 `isFixed = true`
 - 寫入 `位移修補：已水平對齊參考樓層`
 
-### 6.4 垂直重疊修正
+### 6.4 相鄰樓層水平對齊
+相鄰樓層水平對齊由 `applyAdjacentFloorHorizontalAlignment()` 執行，以相鄰樓層 Z 軸重疊為觸發條件，將已選取異常樓層水平對齊相鄰鄰層（不調整 Z 值）。
+
+處理方式如下：
+
+1. 依建號分組並按樓層排序
+2. 逐組檢查相鄰樓層是否出現 `gap < -FloorGapTolerance`
+3. 若上層為已選取異常樓層，則將上層水平對齊下層
+4. 否則若下層為已選取異常樓層，則將下層水平對齊上層
+5. 平移距離不得超過 `100m`，且平移後 footprint 與參考鄰層的重疊比例至少達 `0.5`
+
+修復成功後會：
+
+- 平移經緯度，不改變 Z 值
+- 設定 `isFixed = true`
+- 寫入 `相鄰水平修補` 訊息
+
+本步驟不會清除「垂直重疊」錯誤訊息。
+
+### 6.5 垂直重疊修正
 垂直重疊修正由 `applyVerticalOverlapRepair()` 執行，目標是解決相鄰樓層在 Z 軸上的重疊。
 
 處理方式如下：
@@ -291,7 +314,7 @@ flowchart TD
 
 之後會呼叫 `clearResolvedVerticalErrors()`，重新檢查是否可以移除已解決的垂直異常訊息。
 
-### 6.5 垂直修正
+### 6.6 垂直修正
 垂直修正由 `applyVerticalDisplacementRepair()` 執行，目標是讓異常樓層沿 Z 軸對齊相鄰的正常樓層。
 
 處理邏輯如下：
@@ -311,7 +334,7 @@ flowchart TD
 
 最後同樣會由 `clearResolvedVerticalErrors()` 重新檢查並清除已解決的垂直異常。
 
-### 6.6 清除已解決垂直異常
+### 6.7 清除已解決垂直異常
 `clearResolvedVerticalErrors()` 會重新檢查同建號相鄰樓層的垂直關係，並依 `FloorGapTolerance`、`MaxFloorGap`（來自 `buildingDetectionConfig`）判斷是否可移除以下訊息：
 
 - `垂直重疊`

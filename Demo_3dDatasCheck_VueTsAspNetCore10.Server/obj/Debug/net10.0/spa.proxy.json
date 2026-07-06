@@ -3,7 +3,7 @@
 "ServerUrl": "https://localhost:49690",
 "RedirectUrl": "",
 "LaunchCommand": "npm run dev",
-"WorkingDirectory": "d:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\..\\demo_3ddatascheck_vuetsaspnetcore10.client",
+"WorkingDirectory": "D:\\GitHub\\Demo_3dDatasCheck_VueTsAspNetCore10\\Demo_3dDatasCheck_VueTsAspNetCore10.Server\\..\\demo_3ddatascheck_vuetsaspnetcore10.client",
 "MaxTimeoutInSeconds": "120",
 "KeepRunning": "false"
 }

@@ -33,21 +33,28 @@
           </div>
 
           <!--位移修正專用：水平 / 垂直子選項（僅 displacement 模式顯示）-->
-          <div v-if="repairMode === 'displacement'" class="mode-row">
+          <div v-if="repairMode === 'displacement'" class="mode-row displacement-options">
             <span class="field-label">位移方向</span>
             <label class="mode-option">
               <input v-model="horizontalCorrection" type="checkbox" />
               水平修正
             </label>
             <label class="mode-option">
-              <input v-model="verticalCorrection" type="checkbox" />
-              垂直修正
+              <input v-model="adjacentFloorHorizontalCorrection" type="checkbox" />
+              相鄰樓層水平對齊
             </label>
             <label class="mode-option">
               <input v-model="verticalOverlapCorrection" type="checkbox" />
               垂直重疊修正
             </label>
+            <label class="mode-option">
+              <input v-model="verticalCorrection" type="checkbox" />
+              垂直修正
+            </label>
           </div>
+          <p v-if="repairMode === 'displacement'" class="displacement-hint">
+            相鄰樓層水平對齊僅調整經緯度；垂直重疊修正僅調整 Z 軸。建議分步執行並檢視結果。
+          </p>
 
           <!--缺漏樓層補齊專用：缺漏層數上限設定（僅 gapRepair 模式顯示）-->
           <div v-if="repairMode === 'gapRepair'" class="gap-setting">
@@ -169,6 +176,7 @@
 
   // 位移修正子選項（可複選，預設僅水平修正）
   const horizontalCorrection = ref(true);
+  const adjacentFloorHorizontalCorrection = ref(false);
   const verticalCorrection = ref(false);
   const verticalOverlapCorrection = ref(false);
 
@@ -199,6 +207,7 @@
     if (selectedRowIds.value.length === 0) return false;
     if (repairMode.value === 'displacement') {
       return horizontalCorrection.value
+        || adjacentFloorHorizontalCorrection.value
         || verticalCorrection.value
         || verticalOverlapCorrection.value;
     }
@@ -213,6 +222,7 @@
       maxMissingFloors.value = 99;   // 重置缺漏層數上限
       repairMode.value = 'gapRepair'; // 重置為缺漏樓層補齊模式
       horizontalCorrection.value = true;  // 重置位移子選項
+      adjacentFloorHorizontalCorrection.value = false;
       verticalCorrection.value = false;
       verticalOverlapCorrection.value = false;
       await nextTick();              // 等待 DOM 更新完成，確保 dialogRef 已經指向正確的元素
@@ -301,6 +311,7 @@
       selectedRowIds: [...selectedRowIds.value],
       maxMissingFloors: Math.max(1, maxMissingFloors.value || 99), // 確保至少為 1
       horizontalCorrection: horizontalCorrection.value,
+      adjacentFloorHorizontalCorrection: adjacentFloorHorizontalCorrection.value,
       verticalCorrection: verticalCorrection.value,
       verticalOverlapCorrection: verticalOverlapCorrection.value,
     });
@@ -463,6 +474,14 @@
     font-size: 14px;
     cursor: pointer;
     user-select: none;
+  }
+
+  .displacement-hint {
+    margin: 0;
+    font-size: 12px;
+    color: #6c757d;
+    line-height: 1.4;
+    flex-shrink: 0;
   }
 
   .gap-setting {

@@ -10,18 +10,14 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
     /// 建物資料處理服務
     /// </summary>
 
-    public class BuildingProcessorService
+    public class BuildingProcessorService(IOptions<BuildingAbnormalDetectionOptions> detectionOptions)
     {
         // XML 命名空間（XML Namespace）的識別碼
         private static readonly XNamespace XmlNs =
             "http://schemas.datacontract.org/2004/07/ModelOfBuilding_WebAPI.Models";
 
-        private readonly BuildingAbnormalDetectionOptions _detection;
+        private readonly BuildingAbnormalDetectionOptions _detection = detectionOptions.Value;
 
-        public BuildingProcessorService(IOptions<BuildingAbnormalDetectionOptions> detectionOptions)
-        {
-            _detection = detectionOptions.Value;
-        }
         #region ◆依內容格式自動選擇 XML 或 JSON 解析 [ProcessContent]
         /// <summary>
         /// 依內容格式自動選擇 XML 或 JSON 解析
