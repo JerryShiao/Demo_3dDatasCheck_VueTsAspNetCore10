@@ -92,7 +92,7 @@
         terrainProvider = await Cesium.createWorldTerrainAsync();
       }
     } catch (error) {
-      console.warn('無法載入 Cesium World Terrain，將使用橢球地形進行浮空檢測', error);
+      console.warn('無法載入 Cesium World Terrain，將使用橢球地形進行地形異常檢測', error);
     }
 
     viewer = new Cesium.Viewer('cesiumContainer', {
@@ -301,47 +301,47 @@
   };
   //#endregion
 
-  //#region ◆標記建物為浮空 [markTerrainFloating]
+  //#region ◆標記建物為地形異常 [markTerrainAbnormal]
   /**
-  *  標記建物為浮空
+  *  標記建物為地形異常（離地浮空）
   * @param buildingObj 建物物件
   * @param minZ 建物最低高度
   * @param groundZ 地面高度
   */
-  const markTerrainFloating = (buildingObj: BuildingPart, minZ: number, groundZ: number) => {
+  const markTerrainAbnormal = (buildingObj: BuildingPart, minZ: number, groundZ: number) => {
     try {
       const gap = minZ - groundZ; // 計算建物最低高度與地面高度的差距
       const message = `疑似浮空（底部 ${minZ.toFixed(1)}m，地面 ${groundZ.toFixed(1)}m，落差 ${gap.toFixed(1)}m）`;
       if (buildingObj.errorMessages.includes(message)) { return; }
 
-      buildingObj.isFloating = true; // 標記為浮空
+      buildingObj.isAbnormal = true; // 標記為異常
       buildingObj.isValid = false;   // 標記為無效
       buildingObj.errorMessages.push(message); // 記錄錯誤訊息
     }
     catch (error) {
-      console.error('markTerrainFloating 發生錯誤:', error);
+      console.error('markTerrainAbnormal 發生錯誤:', error);
       return null;
     }
   };
   //#endregion
 
-  //#region ◆依地形高度補充浮空檢測 [detectTerrainFloating]
+  //#region ◆依地形高度補充異常檢測 [detectTerrainAbnormal]
   /**
-  *  依地形高度補充浮空檢測
+  *  依地形高度補充異常檢測
   * @param buildingObjs 建物物件
   */
-  const detectTerrainFloating = async (buildingObjs: BuildingPart[]) => {
+  const detectTerrainAbnormal = async (buildingObjs: BuildingPart[]) => {
     try {
-      // 若 viewer 尚未初始化，則無法進行浮空檢測
+      // 若 viewer 尚未初始化，則無法進行地形異常檢測
       if (!viewer) { return; }
 
       const samples: Cesium.Cartographic[] = [];  // 用於存放所有建物最低點的地理座標
-      const targetBuildings: BuildingPart[] = []; // 用於存放需要進行浮空檢測的建物物件
+      const targetBuildings: BuildingPart[] = []; // 用於存放需要進行地形異常檢測的建物物件
 
-      // 遍歷所有建物物件，找出需要進行浮空檢測的建物
+      // 遍歷所有建物物件，找出需要進行地形異常檢測的建物
       buildingObjs.forEach(buildingItem => {
-        // 若建物物件已經標記為浮空，或者沒有任何座標，則跳過
-        if (buildingItem.isFloating || !buildingItem.coordinates?.length) { return; }
+        // 若建物物件已經標記為異常，或者沒有任何座標，則跳過
+        if (buildingItem.isAbnormal || !buildingItem.coordinates?.length) { return; }
 
         const minZ = getBuildingMinHeight(buildingItem);    // 取得建物最低高度
         const centroid = getBuildingCentroid(buildingItem); // 取得建物中心點
@@ -356,14 +356,14 @@
         targetBuildings.push(buildingItem);
       });
 
-      // 若沒有需要進行浮空檢測的建物，則直接返回
+      // 若沒有需要進行地形異常檢測的建物，則直接返回
       if (samples.length === 0) { return; }
 
       try {
         // 使用 Cesium 的 sampleTerrainMostDetailed 方法，取得所有建物中心點的地形高度
         const updated = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, samples);
 
-        // 遍歷所有需要進行浮空檢測的建物，檢查其最低高度是否高於地形高度
+        // 遍歷所有需要進行地形異常檢測的建物，檢查其最低高度是否高於地形高度
         updated.forEach((pos, index) => {
           const buildingItem = targetBuildings[index]!;    // 取得對應的建物物件
           const minZ = getBuildingMinHeight(buildingItem); // 取得建物最低高度
@@ -372,17 +372,17 @@
           // 取得地形高度，若為 null 則預設為 0
           const groundZ = pos.height ?? 0;
 
-          // 若建物最低高度高於地形高度，則標記為浮空
+          // 若建物最低高度高於地形高度，則標記為異常
           if (minZ - groundZ > GROUND_FLOAT_TOLERANCE) {
-            markTerrainFloating(buildingItem, minZ, groundZ); // 標記建物為浮空
+            markTerrainAbnormal(buildingItem, minZ, groundZ);
           }
         });
       } catch (error) {
-        console.warn('地形高度取樣失敗，略過前端浮空檢測', error);
+        console.warn('地形高度取樣失敗，略過前端地形異常檢測', error);
       }
     }
     catch (error) {
-      console.error('detectTerrainFloating 發生錯誤:', error);
+      console.error('detectTerrainAbnormal 發生錯誤:', error);
       return null;
     }
   };
@@ -395,8 +395,8 @@
   */
   const getBuildingColors = (buildingObj: BuildingPart) => {
     try {
-      // 若建物標示為浮空，則使用橙色線條、半透明橙色填充
-      if (buildingObj.isFloating) {
+      // 若建物標示為異常，則使用橙色線條、半透明橙色填充
+      if (buildingObj.isAbnormal) {
         return {
           color: Cesium.Color.ORANGE.withAlpha(0.5), // 半透明橙色填充
           outlineColor: Cesium.Color.ORANGE,
@@ -618,7 +618,7 @@
             description: `
             <p><b>MID:</b> ${buildingObj.mid}</p>
             <p><b>高度範圍:</b> ${buildingObj.minHeight ?? '-'} ~ ${buildingObj.maxHeight ?? '-'} m</p>
-            <p><b>浮空狀態:</b> ${buildingObj.isFloating ? '是' : '否'}</p>
+            <p><b>異常狀態:</b> ${buildingObj.isAbnormal ? '是' : '否'}</p>
             <p><b>異常資訊:</b> ${buildingObj.errorMessages.join(', ') || '無'}</p>
             <p><b>修復紀錄:</b> ${buildingObj.fixMessages.join(', ') || '無'}</p>
           `,
@@ -661,14 +661,14 @@
       buildings.value = data.map(b => ({
         ...b,
         rowId: crypto.randomUUID(),
-        isFloating: b.isFloating ?? false,
+        isAbnormal: b.isAbnormal ?? false,
         errorMessages: [...(b.errorMessages ?? [])],
         fixMessages: [...(b.fixMessages ?? [])],
       }));
 
       if (!viewer) return;
 
-      await detectTerrainFloating(buildings.value);
+      await detectTerrainAbnormal(buildings.value);
       renderBuildingsOnMap();
 
       const first = buildings.value[0];
@@ -781,7 +781,7 @@
 
       if (!viewer) return;
 
-      await detectTerrainFloating(buildings.value);
+      await detectTerrainAbnormal(buildings.value);
       renderBuildingsOnMap();
 
       Swal.fire({

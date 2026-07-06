@@ -151,7 +151,7 @@
                 <td>{{ b.buildingNo }}</td>
                 <td>{{ b.floor }}</td>
                 <td>
-                  <span v-if="b.isFloating" class="badge abnormal" :title="b.errorMessages.join(', ')">異常</span>
+                  <span v-if="b.isAbnormal" class="badge abnormal" :title="b.errorMessages.join(', ')">異常</span>
                   <span v-else-if="b.isValid && !b.isFixed" class="badge success">正常</span>
                   <span v-else-if="b.isFixed" class="badge warning" :title="b.fixMessages.join(', ')">已修復</span>
                   <span v-else class="badge danger" :title="b.errorMessages.join(', ')">錯誤</span>
@@ -381,7 +381,7 @@
   /**
    * 是否有異常樓層
    */
-  const hasAbnormalFloors = computed(() => props.buildings.some((b) => b.isFloating));
+  const hasAbnormalFloors = computed(() => props.buildings.some((b) => b.isAbnormal));
   //#endregion
 
   //#region ◆執行資料修復 [onApplyRepair]
@@ -477,7 +477,7 @@
    * 建物狀態類型
    */
   function getBuildingCategory(b: BuildingPart): BuildingCategory {
-    if (b.isFloating) return 'abnormal'; // 浮動建物
+    if (b.isAbnormal) return 'abnormal'; // 異常建物
     if (b.isFixed) return 'fixed';       // 固定建物
     if (b.isValid) return 'normal';      // 正常建物
     return 'error';                      // 錯誤建物

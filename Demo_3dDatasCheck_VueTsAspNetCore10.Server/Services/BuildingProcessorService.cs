@@ -14,7 +14,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         private static readonly XNamespace XmlNs =
             "http://schemas.datacontract.org/2004/07/ModelOfBuilding_WebAPI.Models";
 
-        #region -- 浮空檢測閾值（公尺）
+        #region -- 異常檢測閾值（公尺）
         /// <summary>
         /// 地面層底部高度閾值
         /// </summary>
@@ -87,8 +87,8 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 BoundedByRaw = el.Element(XmlNs + "boundedBy")?.Value ?? "" // 原始坐標字串
             })).ToList();
 
-            // 解析坐標字串並進行浮空檢測與修正
-            DetectFloatingIssues(buildings);
+            // 解析坐標字串並進行異常檢測
+            DetectAbnormalIssues(buildings);
 
             // 返回處理後的建物資料列表
             return buildings;
@@ -112,7 +112,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                     features.ValueKind == JsonValueKind.Array)
                 {
                     var geoBuildings = ProcessGeoJsonFeatures(features);
-                    DetectFloatingIssues(geoBuildings);
+                    DetectAbnormalIssues(geoBuildings);
                     return geoBuildings;
                 }
             }
@@ -131,7 +131,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 BoundedByRaw = r.boundedBy ?? "" // 原始坐標字串
             })).ToList();
 
-            DetectFloatingIssues(buildings); // 解析坐標字串並進行浮空檢測與修正
+            DetectAbnormalIssues(buildings); // 解析坐標字串並進行異常檢測
             return buildings; // 返回處理後的建物資料列表
         }
 
@@ -176,17 +176,17 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         }
         #endregion
 
-        #region ◆批次檢測浮空異常 [DetectFloatingIssues]
+        #region ◆批次檢測垂直幾何異常 [DetectAbnormalIssues]
         /// <summary>
-        /// 批次檢測浮空異常：單樓層高度合理性與跨樓層垂直連續性
+        /// 批次檢測垂直幾何異常：單樓層高度合理性與跨樓層垂直連續性
         /// </summary>
-        private static void DetectFloatingIssues(List<BuildingData> buildings)
+        private static void DetectAbnormalIssues(List<BuildingData> buildings)
         {
             // 對每個建物進行檢測
             foreach (var dto in buildings)
             {
                 // 單樓層高度合理性檢測
-                DetectSinglePartFloating(dto); 
+                DetectSinglePartAbnormal(dto); 
             }
 
             // 依 BuildingNo 分組
@@ -217,12 +217,12 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         }
         #endregion
 
-        #region ◆單樓層高度合理性檢測 [DetectSinglePartFloating]
+        #region ◆單樓層高度合理性檢測 [DetectSinglePartAbnormal]
         /// <summary>
         /// 單樓層高度合理性檢測
         /// </summary>
         /// <param name="dto">建物資料</param>
-        private static void DetectSinglePartFloating(BuildingData dto)
+        private static void DetectSinglePartAbnormal(BuildingData dto)
         {
             // 如果最小高度或最大高度為 null，則無法進行檢測
             if (!dto.MinHeight.HasValue || !dto.MaxHeight.HasValue)
@@ -236,13 +236,13 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             // 檢測樓層高度是否低於最小合理層高
             if (height < MinFloorHeight)
             {
-                MarkFloating(dto, $"樓層高度異常偏低（{height:F1}m，低於 {MinFloorHeight}m）");
+                MarkAbnormal(dto, $"樓層高度異常偏低（{height:F1}m，低於 {MinFloorHeight}m）");
             }
 
             // 檢測樓層高度是否高於最大合理層高
             else if (height > MaxFloorHeight)
             {
-                MarkFloating(dto, $"樓層高度異常偏高（{height:F1}m，高於 {MaxFloorHeight}m）");
+                MarkAbnormal(dto, $"樓層高度異常偏高（{height:F1}m，高於 {MaxFloorHeight}m）");
             }
 
             // 僅一般地上 1 樓進行地面層底部高度檢測（排除 R01 / B1 等特殊樓層）
@@ -251,8 +251,8 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 && floorKey.Number == 1
                 && dto.MinHeight.Value > GroundFloorBottomThreshold)
             {
-                // 樓層底部高度異常，標記為浮空
-                MarkFloating(dto, $"疑似浮空：1 樓底部高度 {dto.MinHeight.Value:F1}m，離地超過 {GroundFloorBottomThreshold}m");
+                // 樓層底部高度異常，標記為異常
+                MarkAbnormal(dto, $"疑似浮空：1 樓底部高度 {dto.MinHeight.Value:F1}m，離地超過 {GroundFloorBottomThreshold}m");
             }
         }
         #endregion
@@ -278,44 +278,44 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             if (gap > MaxFloorGap)
             {
                 // 樓層高度差異過大，標記為垂直斷層
-                MarkFloating(lowerFloor,
+                MarkAbnormal(lowerFloor,
                     $"與 {upperFloorLabel} 樓之間垂直斷層（落差 {gap:F1}m，超過 {MaxFloorGap}m）");
 
                 // 標記上層建物為垂直斷層
-                MarkFloating(upperFloor,
+                MarkAbnormal(upperFloor,
                     $"與 {lowerFloorLabel} 樓之間垂直斷層（落差 {gap:F1}m，超過 {MaxFloorGap}m）");
             }
             // 高度差 < 層間高度容許誤差，則標記為垂直重疊
             else if (gap < -FloorGapTolerance)
             {
                 // 樓層高度差異過小，標記為垂直重疊
-                MarkFloating(lowerFloor,
+                MarkAbnormal(lowerFloor,
                     $"與 {upperFloorLabel} 樓垂直重疊（重疊 {Math.Abs(gap):F1}m）");
 
                 // 標記上層建物為垂直重疊
-                MarkFloating(upperFloor,
+                MarkAbnormal(upperFloor,
                     $"與 {lowerFloorLabel} 樓垂直重疊（重疊 {Math.Abs(gap):F1}m）");
             }
 
             if (upperFloor.MinHeight!.Value < lowerFloor.MinHeight!.Value)
             {
-                MarkFloating(upperFloor,
+                MarkAbnormal(upperFloor,
                     $"樓層高度倒置：{upperFloorLabel} 樓底部低於 {lowerFloorLabel} 樓");
             }
         }
         #endregion
 
-        #region ◆標記浮空異常 [MarkFloating]
+        #region ◆標記垂直幾何異常 [MarkAbnormal]
         /// <summary>
-        /// 標記浮空異常
+        /// 標記垂直幾何異常
         /// </summary>
         /// <param name="dto"></param>
         /// <param name="message"></param>
-        private static void MarkFloating(BuildingData dto, string message)
+        private static void MarkAbnormal(BuildingData dto, string message)
         {
-            dto.IsFloating = true; // 標記為浮空
+            dto.IsAbnormal = true; // 標記為異常
             dto.IsValid = false;   // 標記為無效
-            // 將異常訊息加入到浮空異常訊息列表中
+            // 將異常訊息加入到錯誤訊息列表中
             if (!dto.ErrorMessages.Contains(message))
             {
                 dto.ErrorMessages.Add(message);

@@ -13,7 +13,7 @@ export interface BuildingPart {
   errorMessages: string[];       // 建物模型錯誤訊息
   isFixed: boolean;              // 建物模型是否固定 (true: 固定, false: 不固定)
   fixMessages: string[];         // 建物模型固定訊息
-  isFloating: boolean;           // 建物模型是否浮動 (true: 浮動, false: 不浮動)
+  isAbnormal: boolean;           // 是否為垂直幾何異常 (true: 異常, false: 正常)
   rowId?: string;                // 前端載入時產生的唯一識別，供 Vue :key 使用
 }
 

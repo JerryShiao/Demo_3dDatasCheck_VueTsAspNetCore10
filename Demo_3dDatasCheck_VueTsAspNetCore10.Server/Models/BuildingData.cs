@@ -63,9 +63,9 @@
         public List<string> FixMessages { get; set; } = new();
 
         /// <summary>
-        /// 是否疑似浮空（樓層斷層或離地過高）
+        /// 是否為垂直幾何異常（含浮空、層高異常、斷層、重疊、倒置等）
         /// </summary>
-        public bool IsFloating { get; set; } = false;
+        public bool IsAbnormal { get; set; } = false;
         #endregion
 
     }//class end

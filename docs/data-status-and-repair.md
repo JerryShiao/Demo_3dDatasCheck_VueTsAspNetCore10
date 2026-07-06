@@ -15,7 +15,7 @@
 ## 1. 核心資料欄位
 前端與後端目前沒有共用的狀態列舉，畫面上的狀態名稱是由以下欄位組合推導而成：
 
-- `isFloating`：是否被判定為浮空或垂直異常
+- `isAbnormal`：是否被判定為垂直幾何異常（含離地浮空、層高異常、斷層、重疊、倒置等）
 - `isValid`：資料是否有效
 - `isFixed`：資料是否曾被自動修復或互動修復
 - `errorMessages`：異常訊息清單
@@ -30,7 +30,7 @@
 
 實際判斷順序如下：
 
-1. `isFloating === true` 時顯示為 `異常`
+1. `isAbnormal === true` 時顯示為 `異常`
 2. 否則若 `isFixed === true` 時顯示為 `已修復`
 3. 否則若 `isValid === true` 時顯示為 `正常`
 4. 其餘情況顯示為 `錯誤`
@@ -43,25 +43,25 @@
 
 | 顯示狀態 | 主要條件 | 說明 |
 | --- | --- | --- |
-| `正常` | `!isFloating && isValid && !isFixed` | 資料有效，且未被標記為浮空，也沒有修復紀錄 |
-| `異常` | `isFloating` | 只要被標記為浮空或垂直異常，就會優先顯示為異常 |
-| `錯誤` | `!isFloating && !isFixed && !isValid` | 資料無效，但不屬於浮空，也尚未被修復 |
-| `已修復` | `!isFloating && isFixed` | 曾被後端或前端修復，且目前未被標記為浮空 |
+| `正常` | `!isAbnormal && isValid && !isFixed` | 資料有效，且未被標記為異常，也沒有修復紀錄 |
+| `異常` | `isAbnormal` | 只要被標記為垂直幾何異常，就會優先顯示為異常 |
+| `錯誤` | `!isAbnormal && !isFixed && !isValid` | 資料無效，但不屬於異常，也尚未被修復 |
+| `已修復` | `!isAbnormal && isFixed` | 曾被後端或前端修復，且目前未被標記為異常 |
 
 ### 2.3 正常
 `正常` 代表資料沒有被後端或前端檢測為異常，且也沒有修復紀錄。常見來源如下：
 
 - `BuildingProcessorService.ValidateAndFix()` 驗證後未發現缺漏或幾何問題
-- `BuildingProcessorService.DetectFloatingIssues()` 未判定為浮空或垂直異常
-- `BuildingDemo.detectTerrainFloating()` 未因地形高差再次標記為浮空
+- `BuildingProcessorService.DetectAbnormalIssues()` 未判定為垂直幾何異常
+- `BuildingDemo.detectTerrainAbnormal()` 未因地形高差再次標記為異常
 
 ### 2.4 異常
-`異常` 對應 `isFloating = true`。雖然名稱為浮空，但目前實作上它不只代表真正的離地浮空，也包含多種垂直幾何異常。
+`異常` 對應 `isAbnormal = true`，涵蓋多種垂直幾何異常，包含離地浮空、樓層高度異常、垂直斷層、垂直重疊與樓層高度倒置。
 
 #### 後端會標記為異常的情況
-後端在 `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Services/BuildingProcessorService.cs` 中，透過 `DetectFloatingIssues()` 呼叫以下檢測：
+後端在 `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Services/BuildingProcessorService.cs` 中，透過 `DetectAbnormalIssues()` 呼叫以下檢測：
 
-- `DetectSinglePartFloating()`
+- `DetectSinglePartAbnormal()`
   - 樓層高度低於 `2.0m`
   - 樓層高度高於 `8.0m`
   - 一般 1 樓底部高度高於 `5.0m`
@@ -70,26 +70,26 @@
   - 相鄰樓層重疊超過 `0.5m`，標記為垂直重疊
   - 上層底部低於下層底部，標記為樓層高度倒置
 
-上述情況都會透過 `MarkFloating()`：
+上述情況都會透過 `MarkAbnormal()`：
 
-- 設定 `IsFloating = true`
+- 設定 `IsAbnormal = true`
 - 設定 `IsValid = false`
 - 將異常訊息寫入 `ErrorMessages`
 
 #### 前端會補充標記為異常的情況
-前端在 `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/BuildingDemo.vue` 的 `detectTerrainFloating()` 中，會使用 Cesium 地形取樣補做一次判斷：
+前端在 `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/BuildingDemo.vue` 的 `detectTerrainAbnormal()` 中，會使用 Cesium 地形取樣補做一次判斷：
 
 - 若 `建物最低高程 - 地形高度 > 3.0m`
-- 則由 `markTerrainFloating()` 將該筆資料設為浮空
+- 則由 `markTerrainAbnormal()` 將該筆資料標記為異常
 
 此時也會：
 
-- 設定 `isFloating = true`
+- 設定 `isAbnormal = true`
 - 設定 `isValid = false`
-- 追加一筆描述地形落差的 `errorMessages`
+- 追加一筆描述地形落差的 `errorMessages`（訊息內容仍可能包含「疑似浮空」等具體描述）
 
 ### 2.5 錯誤
-`錯誤` 代表資料本身無效，但目前沒有被歸類為浮空，也沒有修復完成。這類資料通常來自後端驗證階段的資料品質問題。
+`錯誤` 代表資料本身無效，但目前沒有被歸類為異常，也沒有修復完成。這類資料通常來自後端驗證階段的資料品質問題。
 
 常見情況如下：
 
@@ -101,7 +101,7 @@
 這些情況多由 `ValidateAndFix()` 設定 `IsValid = false`，但不一定會設定 `IsFixed = true`。
 
 ### 2.6 已修復
-`已修復` 代表資料有修復紀錄，且目前未被標記為浮空。
+`已修復` 代表資料有修復紀錄，且目前未被標記為異常。
 
 #### 後端自動修復
 `ValidateAndFix()` 會在下列情況設定 `IsFixed = true` 並寫入 `FixMessages`：
@@ -115,7 +115,7 @@
 #### 前端互動修復
 前端在 `demo_3ddatascheck_vuetsaspnetcore10.client/src/utils/buildingRepair.ts` 中執行修復後，也會設定 `isFixed = true` 並追加 `fixMessages`，例如：
 
-- `浮空修補：已補齊缺漏樓層`
+- `缺漏樓層補齊：已補齊缺漏樓層`
 - `位移修補：已水平對齊參考樓層`
 - `位移修補：已垂直對齊鄰層`
 - `垂直重疊修補：已上移對齊下層`
@@ -125,13 +125,13 @@
 ```mermaid
 flowchart TD
     importData[匯入資料] --> backendParse[後端解析與 ValidateAndFix]
-    backendParse --> backendDetect[後端 DetectFloatingIssues]
+    backendParse --> backendDetect[後端 DetectAbnormalIssues]
     backendDetect --> clientLoad[前端 loadDataToMap]
-    clientLoad --> terrainDetect[前端 detectTerrainFloating]
+    clientLoad --> terrainDetect[前端 detectTerrainAbnormal]
     terrainDetect --> uiCategory[前端 getBuildingCategory 顯示狀態]
     uiCategory --> repairDialog[使用者開啟資料修復]
     repairDialog --> applyRepair[前端 applyBuildingRepair]
-    applyRepair --> terrainRecheck[修復後再次 detectTerrainFloating]
+    applyRepair --> terrainRecheck[修復後再次 detectTerrainAbnormal]
     terrainRecheck --> rerender[更新列表與 3D 圖台]
 ```
 
@@ -145,13 +145,13 @@ flowchart TD
 1. 使用者在 `BuildingCheckDialog.vue` 開啟 `DataRepairDialog.vue`
 2. `DataRepairDialog.vue` 組出 `RepairRequest`
 3. `BuildingDemo.vue` 的 `handleRepairBuildings()` 呼叫 `applyBuildingRepair()`
-4. 修復完成後重新執行 `detectTerrainFloating()`
+4. 修復完成後重新執行 `detectTerrainAbnormal()`
 5. 重新渲染圖台與列表，並顯示修復摘要
 
 ### 4.2 修復對象
-`DataRepairDialog.vue` 目前只會列出 `isFloating === true` 的資料：
+`DataRepairDialog.vue` 目前只會列出 `isAbnormal === true` 的資料：
 
-- `.filter((b) => b.isFloating && b.rowId)`
+- `.filter((b) => b.isAbnormal && b.rowId)`
 
 這代表目前可由互動畫面修復的對象，限於被歸類為 `異常` 的樓層；純 `錯誤` 狀態的資料不會出現在修復清單中。
 
@@ -159,24 +159,24 @@ flowchart TD
 `RepairRequest` 定義於 `demo_3ddatascheck_vuetsaspnetcore10.client/src/utils/buildingRepair.ts`，主要欄位如下：
 
 - `mode`
-  - `floating`
+  - `gapRepair`
   - `displacement`
 - `selectedRowIds`：使用者勾選的樓層
-- `maxMissingFloors`：浮空修正時允許補齊的缺漏層數上限
+- `maxMissingFloors`：缺漏樓層補齊時允許補齊的缺漏層數上限
 - `horizontalCorrection`：位移修正是否啟用水平修正
 - `verticalCorrection`：位移修正是否啟用垂直修正
 - `verticalOverlapCorrection`：位移修正是否啟用垂直重疊修正
 
-## 5. 浮空修正邏輯
+## 5. 缺漏樓層補齊邏輯
 
 ### 5.1 目的
-浮空修正對應 `applyFloatingRepair()`，核心目標是補齊同建號建物中，已選取浮空樓層之間的缺漏樓層。
+缺漏樓層補齊對應 `applyGapRepair()`，核心目標是補齊同建號建物中，已選取異常樓層之間的缺漏樓層。
 
 ### 5.2 處理流程
-`applyFloatingRepair()` 的處理方式如下：
+`applyGapRepair()` 的處理方式如下：
 
 1. 複製原始建物資料，避免直接污染輸入
-2. 只保留 `isFloating = true` 且被使用者勾選的樓層
+2. 只保留 `isAbnormal = true` 且被使用者勾選的樓層
 3. 依 `buildingNo` 分組
 4. 依樓層排序後，比較相鄰樓層的樓層號碼差距
 5. 若樓層之間有缺層，且缺漏數未超過 `maxMissingFloors`，則建立補齊樓層
@@ -191,8 +191,8 @@ flowchart TD
 - 新增資料會直接標記為：
   - `isValid = true`
   - `isFixed = true`
-  - `isFloating = false`
-- 修復訊息會寫入 `浮空修補：已補齊缺漏樓層 XXX`
+  - `isAbnormal = false`
+- 修復訊息會寫入 `缺漏樓層補齊：已補齊缺漏樓層 XXX`
 
 ### 5.4 高度推算方式
 補齊缺漏樓層時，程式會以：
@@ -235,8 +235,8 @@ flowchart TD
 ### 6.3 水平修正
 水平修正由 `applyHorizontalDisplacementRepair()` 執行，邏輯如下：
 
-1. 只處理 `isFloating = true` 且被選取的樓層
-2. 在同一 `buildingNo` 中尋找非浮空樓層作為參考樓層
+1. 只處理 `isAbnormal = true` 且被選取的樓層
+2. 在同一 `buildingNo` 中尋找非異常樓層作為參考樓層
 3. 以目標樓層與參考樓層的質心差，計算平移量
 4. 若平移距離大於 `100m`，則忽略該參考樓層
 5. 計算平移後 footprint 與參考樓層 footprint 的重疊比例
@@ -269,12 +269,12 @@ flowchart TD
 之後會呼叫 `clearResolvedVerticalErrors()`，重新檢查是否可以移除已解決的垂直異常訊息。
 
 ### 6.5 垂直修正
-垂直修正由 `applyVerticalDisplacementRepair()` 執行，目標是讓浮空樓層沿 Z 軸對齊相鄰的正常樓層。
+垂直修正由 `applyVerticalDisplacementRepair()` 執行，目標是讓異常樓層沿 Z 軸對齊相鄰的正常樓層。
 
 處理邏輯如下：
 
 1. 解析目前樓層號碼
-2. 在同建號資料中尋找前一層與下一層的非浮空參考樓層
+2. 在同建號資料中尋找前一層與下一層的非異常參考樓層
 3. 若上下參考樓層都存在，且中間可容納目前樓層高度，則優先使用上下鄰層夾出的空間
 4. 若只有下層存在，則將本樓層底部對齊下層頂部
 5. 若只有上層存在，則將本樓層頂部對齊上層底部
@@ -297,7 +297,7 @@ flowchart TD
 
 若某筆資料的 `errorMessages` 被清空，則會同步：
 
-- 設定 `isFloating = false`
+- 設定 `isAbnormal = false`
 - 設定 `isValid = true`
 
 這也是某些資料從 `異常` 轉為 `已修復` 或 `正常` 的關鍵步驟。
@@ -307,7 +307,7 @@ flowchart TD
 
 1. 以修復結果覆蓋目前 `buildings`
 2. 補齊 `rowId`、`errorMessages`、`fixMessages`
-3. 再次執行 `detectTerrainFloating()`
+3. 再次執行 `detectTerrainAbnormal()`
 4. 重新渲染 3D 建物
 5. 顯示修復摘要對話框
 
@@ -315,25 +315,25 @@ flowchart TD
 
 ## 8. 目前實作限制與注意事項
 
-### 8.1 `isFloating` 的語意較廣
-雖然畫面文案常寫成「浮空異常」，但目前 `isFloating` 實際上同時承載：
+### 8.1 `isAbnormal` 的語意範圍
+`isAbnormal` 涵蓋以下垂直幾何異常類型：
 
-- 真正離地浮空
+- 離地浮空（含地形落差檢測）
 - 樓層高度異常
 - 垂直斷層
 - 垂直重疊
 - 樓層高度倒置
 
-因此 `異常` 不等於只有地形浮空。
+畫面顯示的「異常」與程式欄位 `isAbnormal` 已一致；`errorMessages` 中的具體描述（如「疑似浮空」）則保留各異常類型的細節說明。
 
 ### 8.2 修復主要在前端
 目前互動式修復流程完全在前端完成，後端負責的修復僅限於匯入階段的基本清理與自動補值。
 
 ### 8.3 `已修復` 不一定代表完全無問題
-只要 `isFixed = true` 且 `isFloating = false`，畫面就會顯示為 `已修復`。若資料曾經被自動補值或幾何補強，即使原先存在錯誤，也可能直接歸類為 `已修復`。
+只要 `isFixed = true` 且 `isAbnormal = false`，畫面就會顯示為 `已修復`。若資料曾經被自動補值或幾何補強，即使原先存在錯誤，也可能直接歸類為 `已修復`。
 
 ### 8.4 修復後仍可能回到異常
-修復完成後會再次進行地形浮空檢測，因此原本已修復的資料仍可能因地形落差被重新標記為 `異常`。
+修復完成後會再次進行地形異常檢測（`detectTerrainAbnormal`），因此原本已修復的資料仍可能因地形落差被重新標記為 `異常`。
 
 ### 8.5 修復清單不包含純錯誤資料
-`DataRepairDialog.vue` 只列出 `isFloating` 資料，因此僅有 `錯誤` 而非 `異常` 的資料，無法透過目前的資料修復對話框處理。
+`DataRepairDialog.vue` 只列出 `isAbnormal` 資料，因此僅有 `錯誤` 而非 `異常` 的資料，無法透過目前的資料修復對話框處理。

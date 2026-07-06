@@ -1,18 +1,18 @@
 /**
  * 建物資料修復工具
- * 提供「浮空修正」（補齊缺漏樓層）與「位移修正」（水平對齊參考樓層）兩種修復模式
+ * 提供「缺漏樓層補齊」與「位移修正」（水平對齊參考樓層）兩種修復模式
  */
 import type { BuildingPart } from '../types/BuildingPart.ts';
 
 //【型別定義】===================================================================
-/** 修正模式：floating = 浮空修正；displacement = 位移修正 */
-export type RepairMode = 'floating' | 'displacement';
+/** 修正模式：gapRepair = 缺漏樓層補齊；displacement = 位移修正 */
+export type RepairMode = 'gapRepair' | 'displacement';
 
 /** 修復請求參數（由 DataRepairDialog 傳入） */
 export interface RepairRequest {
   mode: RepairMode;           // 修正模式
   selectedRowIds: string[];   // 使用者勾選要修復的樓層 rowId 清單
-  maxMissingFloors: number;     // 浮空修正時，允許補齊的缺漏層數上限 X
+  maxMissingFloors: number;     // 缺漏樓層補齊時，允許補齊的缺漏層數上限 X
   horizontalCorrection?: boolean; // 位移修正：是否執行水平修正（預設 true）
   verticalCorrection?: boolean;   // 位移修正：是否執行垂直修正（預設 false）
   verticalOverlapCorrection?: boolean; // 位移修正：是否執行垂直重疊修正（預設 false）
@@ -28,10 +28,10 @@ export interface DisplacementRepairOptions {
 /** 修復執行結果（回傳給父元件顯示摘要與更新資料） */
 export interface RepairResult {
   buildings: BuildingPart[];  // 修復後的完整建物清單
-  insertedCount: number;        // 浮空修正：新補齊的樓層筆數
+  insertedCount: number;        // 缺漏樓層補齊：新補齊的樓層筆數
   fixedCount: number;           // 位移修正：成功對齊的樓層筆數
   skippedCount: number;         // 位移修正：無法對齊而跳過的筆數
-  skippedGaps: number;          // 浮空修正：缺漏層數超過上限而跳過的區段數
+  skippedGaps: number;          // 缺漏樓層補齊：缺漏層數超過上限而跳過的區段數
   summary: string;              // 人類可讀的修復摘要訊息
 }
 
@@ -48,7 +48,7 @@ const MIN_OVERLAP_RATIO = 0.5;
 /** 位移修正：允許的最大水平位移距離（公尺），超過則不採用該參考樓層 */
 const MAX_SHIFT_METERS = 100;
 
-/** 浮空修正：無法從上下樓層推算高度時，預設每層高度（公尺） */
+/** 缺漏樓層補齊：無法從上下樓層推算高度時，預設每層高度（公尺） */
 const DEFAULT_FLOOR_HEIGHT = 3.0;
 
 /** 垂直連續性：層間高度容許誤差（公尺），與後端 FloorGapTolerance 一致 */
@@ -453,7 +453,7 @@ function formatFloor(floorNo: number): string {
 //#region ◆建立補齊樓層 [createPatchedBuilding]
 /**
  * 建立補齊樓層
- * 以鄰近浮空樓層為模板，複製幾何並調整高度，產生新的 BuildingPart
+ * 以鄰近異常樓層為模板，複製幾何並調整高度，產生新的 BuildingPart
  */
 function createPatchedBuilding(
   template: BuildingPart,
@@ -486,8 +486,8 @@ function createPatchedBuilding(
     isValid: true,
     errorMessages: [],
     isFixed: true,
-    fixMessages: [`浮空修補：已補齊缺漏樓層 ${floor}`],
-    isFloating: false,
+    fixMessages: [`缺漏樓層補齊：已補齊缺漏樓層 ${floor}`],
+    isAbnormal: false,
     rowId: crypto.randomUUID(),
   };
 
@@ -498,15 +498,15 @@ function createPatchedBuilding(
 
 //【修復主流程】=================================================================
 
-//#region ◆浮空修正 [applyFloatingRepair]
+//#region ◆缺漏樓層補齊 [applyGapRepair]
 /**
- * 浮空修正
- * 針對同一建號內已勾選的浮空樓層，偵測上下樓層之間的缺漏層並補齊
+ * 缺漏樓層補齊
+ * 針對同一建號內已勾選的異常樓層，偵測上下樓層之間的缺漏層並補齊
  * @param buildings 原始建物清單
  * @param selectedRowIds 使用者勾選的 rowId 集合
  * @param maxMissingFloors 缺漏層數上限 X，超過則跳過該區段
  */
-export function applyFloatingRepair(
+export function applyGapRepair(
   buildings: BuildingPart[],
   selectedRowIds: Set<string>,
   maxMissingFloors: number,
@@ -516,10 +516,10 @@ export function applyFloatingRepair(
   const inserted: BuildingPart[] = [];
   let skippedGaps = 0;
 
-  // 依建號分組，僅處理已勾選的浮空樓層
+  // 依建號分組，僅處理已勾選的異常樓層
   const groups = new Map<string, BuildingPart[]>();
   for (const b of result) {
-    if (!b.isFloating || !b.rowId || !selectedRowIds.has(b.rowId)) continue;
+    if (!b.isAbnormal || !b.rowId || !selectedRowIds.has(b.rowId)) continue;
     const key = b.buildingNo || 'UNKNOWN_NO';
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(b);
@@ -570,18 +570,18 @@ export function applyFloatingRepair(
 }
 //#endregion
 
-//#region ◆依樓層號查找非浮空鄰層 [findNonFloatingByFloorNo]
+//#region ◆依樓層號查找非異常鄰層 [findNonAbnormalByFloorNo]
 /**
- * 依樓層號查找非浮空鄰層
+ * 依樓層號查找非異常鄰層
  */
-function findNonFloatingByFloorNo(
+function findNonAbnormalByFloorNo(
   group: BuildingPart[],
   floorNo: number,
   excludeRowId: string,
 ): BuildingPart | null {
   for (const ref of group) {
     if (ref.rowId === excludeRowId) continue;
-    if (ref.isFloating) continue;
+    if (ref.isAbnormal) continue;
     if (parseFloorNumber(ref.floor) === floorNo) return ref;
   }
   return null;
@@ -639,7 +639,7 @@ function removeHeightInversionMessages(building: BuildingPart, lowerFloor: strin
 //#region ◆清除已解決的垂直異常標記 [clearResolvedVerticalErrors]
 /**
  * 重新檢核同建號相鄰樓層的垂直連續性，移除已解決的異常訊息；
- * 若樓層已無任何異常訊息則清除 isFloating
+ * 若樓層已無任何異常訊息則清除 isAbnormal
  */
 function clearResolvedVerticalErrors(buildings: BuildingPart[]): void {
   const byBuildingNo = new Map<string, BuildingPart[]>();
@@ -678,7 +678,7 @@ function clearResolvedVerticalErrors(buildings: BuildingPart[]): void {
 
     for (const building of sorted) {
       if (building.errorMessages.length === 0) {
-        building.isFloating = false;
+        building.isAbnormal = false;
         building.isValid = true;
       }
     }
@@ -689,7 +689,7 @@ function clearResolvedVerticalErrors(buildings: BuildingPart[]): void {
 //#region ◆水平位移修正 [applyHorizontalDisplacementRepair]
 /**
  * 水平位移修正
- * 將浮空樓層水平平移，使其與同建號內非浮空參考樓層的重疊面積最大化
+ * 將異常樓層水平平移，使其與同建號內非異常參考樓層的重疊面積最大化
  * @param buildings 原始建物清單
  * @param selectedRowIds 使用者勾選的 rowId 集合
  */
@@ -721,17 +721,16 @@ export function applyHorizontalDisplacementRepair(
   let skippedCount = 0; // 無法對齊而跳過的筆數
 
   for (const b of result) {
-    // 如果樓層不是浮空，或者 rowId 不存在，或者使用者沒有勾選，則跳過
-    if (!b.isFloating || !b.rowId || !selectedRowIds.has(b.rowId)) continue;
-    // 如果樓層不是浮空，或者 rowId 不存在，或者使用者沒有勾選，則跳過
+    // 如果樓層不是異常，或者 rowId 不存在，或者使用者沒有勾選，則跳過
+    if (!b.isAbnormal || !b.rowId || !selectedRowIds.has(b.rowId)) continue;
     if (!b.coordinates?.length) {
       skippedCount++;
       continue; // 跳過
     }
-    // 同建號內的非浮空樓層作為參考
+    // 同建號內的非異常樓層作為參考
     const group = byBuildingNo.get(b.buildingNo || 'UNKNOWN_NO') ?? []; // 查找同建號的樓層
     const references = group.filter(
-      (ref) => ref.rowId !== b.rowId && !ref.isFloating && ref.coordinates?.length, // 過濾掉自己、浮空樓層和沒有座標的樓層
+      (ref) => ref.rowId !== b.rowId && !ref.isAbnormal && ref.coordinates?.length, // 過濾掉自己、異常樓層和沒有座標的樓層
     );
     // 如果沒有參考樓層，則跳過
     if (references.length === 0) {
@@ -814,7 +813,7 @@ export function applyHorizontalDisplacementRepair(
 //#region ◆垂直位移修正 [applyVerticalDisplacementRepair]
 /**
  * 垂直位移修正
- * 依上下鄰層堆疊規則平移 Z，使浮空樓層與非浮空鄰層垂直對齊
+ * 依上下鄰層堆疊規則平移 Z，使異常樓層與非異常鄰層垂直對齊
  * @param buildings 原始建物清單
  * @param selectedRowIds 使用者勾選的 rowId 集合
  */
@@ -840,7 +839,7 @@ export function applyVerticalDisplacementRepair(
   let skippedCount = 0;
 
   for (const b of result) {
-    if (!b.isFloating || !b.rowId || !selectedRowIds.has(b.rowId)) continue;
+    if (!b.isAbnormal || !b.rowId || !selectedRowIds.has(b.rowId)) continue;
     if (!b.coordinates?.length) {
       skippedCount++;
       continue;
@@ -853,8 +852,8 @@ export function applyVerticalDisplacementRepair(
     }
 
     const group = byBuildingNo.get(b.buildingNo || 'UNKNOWN_NO') ?? [];
-    const lowerRef = findNonFloatingByFloorNo(group, floorNo - 1, b.rowId);
-    const upperRef = findNonFloatingByFloorNo(group, floorNo + 1, b.rowId);
+    const lowerRef = findNonAbnormalByFloorNo(group, floorNo - 1, b.rowId);
+    const upperRef = findNonAbnormalByFloorNo(group, floorNo + 1, b.rowId);
 
     if (!lowerRef && !upperRef) {
       skippedCount++;
@@ -973,10 +972,10 @@ export function applyVerticalOverlapRepair(
       if (gap >= -FLOOR_GAP_TOLERANCE) continue;
 
       const upperSelected = Boolean(
-        upper.isFloating && upper.rowId && selectedRowIds.has(upper.rowId),
+        upper.isAbnormal && upper.rowId && selectedRowIds.has(upper.rowId),
       );
       const lowerSelected = Boolean(
-        lower.isFloating && lower.rowId && selectedRowIds.has(lower.rowId),
+        lower.isAbnormal && lower.rowId && selectedRowIds.has(lower.rowId),
       );
 
       if (upperSelected) {
@@ -1102,7 +1101,7 @@ export function applyDisplacementRepair(
 //#region ◆統一修復入口 [applyBuildingRepair]
 /**
  * 統一修復入口
- * 依 RepairRequest 的 mode 分派至浮空修正或位移修正，並組裝 RepairResult
+ * 依 RepairRequest 的 mode 分派至缺漏樓層補齊或位移修正，並組裝 RepairResult
  * @param buildings 原始建物清單
  * @param request 修復請求參數
  */
@@ -1112,8 +1111,8 @@ export function applyBuildingRepair(
 ): RepairResult {
   const selectedRowIds = new Set(request.selectedRowIds);
 
-  if (request.mode === 'floating') {
-    const { buildings: updated, insertedCount, skippedGaps } = applyFloatingRepair(
+  if (request.mode === 'gapRepair') {
+    const { buildings: updated, insertedCount, skippedGaps } = applyGapRepair(
       buildings,
       selectedRowIds,
       request.maxMissingFloors,

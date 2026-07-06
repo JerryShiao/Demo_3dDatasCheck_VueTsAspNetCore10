@@ -19,12 +19,12 @@
         </div>
 
         <div class="modal-body">
-          <!--修正模式選擇（浮空修正 / 位移修正）-->
+          <!--修正模式選擇（缺漏樓層補齊 / 位移修正）-->
           <div class="mode-row">
             <span class="field-label">修正模式</span>
             <label class="mode-option">
-              <input v-model="repairMode" type="radio" value="floating" />
-              浮空修正
+              <input v-model="repairMode" type="radio" value="gapRepair" />
+              缺漏樓層補齊
             </label>
             <label class="mode-option">
               <input v-model="repairMode" type="radio" value="displacement" />
@@ -49,8 +49,8 @@
             </label>
           </div>
 
-          <!--浮空修正專用：缺漏層數上限設定（僅 floating 模式顯示）-->
-          <div v-if="repairMode === 'floating'" class="gap-setting">
+          <!--缺漏樓層補齊專用：缺漏層數上限設定（僅 gapRepair 模式顯示）-->
+          <div v-if="repairMode === 'gapRepair'" class="gap-setting">
             <label class="field-label" for="max-missing-floors">缺漏層數上限 X</label>
             <input id="max-missing-floors"
                    v-model.number="maxMissingFloors"
@@ -59,16 +59,16 @@
                    class="number-input" />
           </div>
 
-          <!--浮空異常樓層列表標題與全選操作-->
+          <!--異常樓層列表標題與全選操作-->
           <div class="list-header">
-            <span class="field-label">浮空異常樓層（{{ floatingBuildings.length }} 筆）</span>
+            <span class="field-label">異常樓層（{{ abnormalBuildings.length }} 筆）</span>
             <div class="select-actions">
               <button type="button" class="btn-link" @click="selectAll">全選</button>
               <button type="button" class="btn-link" @click="deselectAll">取消全選</button>
             </div>
           </div>
 
-          <!--浮空異常樓層勾選表格-->
+          <!--異常樓層勾選表格-->
           <div class="table-wrapper">
             <table>
               <thead>
@@ -81,10 +81,10 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="floatingBuildings.length === 0">
-                  <td colspan="5" class="empty-row">目前沒有浮空異常樓層</td>
+                <tr v-if="abnormalBuildings.length === 0">
+                  <td colspan="5" class="empty-row">目前沒有異常樓層</td>
                 </tr>
-                <tr v-for="item in floatingBuildings" :key="item.rowId">
+                <tr v-for="item in abnormalBuildings" :key="item.rowId">
                   <td class="col-check">
                     <input v-model="selectedRowIds"
                            type="checkbox"
@@ -145,7 +145,7 @@
   // 型別用泛型 <{ ... }> 寫，TypeScript 會做型別檢查
   const props = defineProps<{
     modelValue: boolean;       // 跳窗是否顯示（對應父元件的 v-model="showDataRepairDialog"）
-    buildings: BuildingPart[]; // 父元件傳入的建物資料清單，用於篩選浮空異常樓層
+    buildings: BuildingPart[]; // 父元件傳入的建物資料清單，用於篩選異常樓層
   }>();
 
   // defineEmits：宣告「我可以向父元件發出哪些事件」
@@ -161,10 +161,10 @@
   // 跳窗位置（相對於畫面中央的偏移量，px）
   const position = ref({ x: 0, y: 0 });
 
-  // 修正模式：floating = 浮空修正（補齊缺漏層）；displacement = 位移修正
-  const repairMode = ref<RepairMode>('floating');
+  // 修正模式：gapRepair = 缺漏樓層補齊；displacement = 位移修正
+  const repairMode = ref<RepairMode>('gapRepair');
 
-  // 浮空修正時允許補齊的缺漏層數上限 X（預設 99）
+  // 缺漏樓層補齊時允許補齊的缺漏層數上限 X（預設 99）
   const maxMissingFloors = ref(99);
 
   // 位移修正子選項（可複選，預設僅水平修正）
@@ -181,10 +181,10 @@
   let interactable: ReturnType<typeof interact> | null = null;
 
   //【計算屬性】===================================================================
-  // 從父元件傳入的 buildings 中篩選出浮空異常樓層，並依建號、樓層排序
-  const floatingBuildings = computed(() => {
+  // 從父元件傳入的 buildings 中篩選出異常樓層，並依建號、樓層排序
+  const abnormalBuildings = computed(() => {
     return props.buildings
-      .filter((b) => b.isFloating && b.rowId)
+      .filter((b) => b.isAbnormal && b.rowId)
       .sort((a, b) => {
         const buildingCmp = a.buildingNo.localeCompare(b.buildingNo, 'zh-TW', { numeric: true });
         if (buildingCmp !== 0) return buildingCmp;
@@ -209,9 +209,9 @@
   // 監聽視窗開啟：重置表單狀態並初始化 interact.js
   watch(() => props.modelValue, async (visible) => {
     if (visible) {
-      resetSelection();              // 預設全選所有浮空異常樓層
+      resetSelection();              // 預設全選所有異常樓層
       maxMissingFloors.value = 99;   // 重置缺漏層數上限
-      repairMode.value = 'floating'; // 重置為浮空修正模式
+      repairMode.value = 'gapRepair'; // 重置為缺漏樓層補齊模式
       horizontalCorrection.value = true;  // 重置位移子選項
       verticalCorrection.value = false;
       verticalOverlapCorrection.value = false;
@@ -222,8 +222,8 @@
     }
   });
 
-  // 監聽浮空異常樓層清單變化：跳窗開啟時重新全選，確保勾選與最新資料同步
-  watch(floatingBuildings, () => {
+  // 監聽異常樓層清單變化：跳窗開啟時重新全選，確保勾選與最新資料同步
+  watch(abnormalBuildings, () => {
     if (props.modelValue) {
       resetSelection();
     }
@@ -248,10 +248,10 @@
   //#region ◆重置勾選為全選 [resetSelection]
   /**
    * 重置勾選為全選
-   * 將 selectedRowIds 設為目前所有浮空異常樓層的 rowId
+   * 將 selectedRowIds 設為目前所有異常樓層的 rowId
    */
   const resetSelection = () => {
-    selectedRowIds.value = floatingBuildings.value
+    selectedRowIds.value = abnormalBuildings.value
       .map((b) => b.rowId!)
       .filter(Boolean);
   };
@@ -269,10 +269,10 @@
   //#region ◆全選 [selectAll]
   /**
    * 全選
-   * 勾選表格中所有浮空異常樓層
+   * 勾選表格中所有異常樓層
    */
   const selectAll = () => {
-    selectedRowIds.value = floatingBuildings.value
+    selectedRowIds.value = abnormalBuildings.value
       .map((b) => b.rowId!)
       .filter(Boolean);
   };
