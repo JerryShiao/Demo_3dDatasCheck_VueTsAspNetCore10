@@ -9,11 +9,15 @@ import { getFloorGapTolerance, getMaxFloorGap } from './buildingDetectionConfig.
 /** 修正模式：gapRepair = 缺漏樓層補齊；displacement = 位移修正 */
 export type RepairMode = 'gapRepair' | 'displacement';
 
+/** 缺漏樓層補齊策略：floorNumberGap = 樓層號跳號才補；verticalGap = 垂直空缺一律補 */
+export type GapRepairStrategy = 'floorNumberGap' | 'verticalGap';
+
 /** 修復請求參數（由 DataRepairDialog 傳入） */
 export interface RepairRequest {
   mode: RepairMode;           // 修正模式
   selectedRowIds: string[];   // 使用者勾選要修復的樓層 rowId 清單
   maxMissingFloors: number;     // 缺漏樓層補齊時，允許補齊的缺漏層數上限 X
+  gapRepairStrategy?: GapRepairStrategy; // 缺漏樓層補齊策略（預設 floorNumberGap）
   horizontalCorrection?: boolean; // 位移修正：是否執行水平修正（預設 true）
   verticalCorrection?: boolean;   // 位移修正：是否執行垂直修正（預設 false）
   adjacentFloorHorizontalCorrection?: boolean; // 位移修正：是否執行相鄰樓層水平對齊（預設 false）
@@ -36,6 +40,16 @@ export interface RepairResult {
   skippedCount: number;         // 位移修正：無法對齊而跳過的筆數
   skippedGaps: number;          // 缺漏樓層補齊：缺漏層數超過上限而跳過的區段數
   summary: string;              // 人類可讀的修復摘要訊息
+  gapRepairStrategy?: GapRepairStrategy;
+  skippedNoTemplate?: number;   // 缺漏樓層補齊：無可用模板而跳過的區段數
+}
+
+/** 缺漏樓層補齊內部結果 */
+interface GapRepairOutcome {
+  buildings: BuildingPart[];
+  insertedCount: number;
+  skippedGaps: number;
+  skippedNoTemplate: number;
 }
 
 /** 三維座標點 [經度, 緯度, 高度] */
@@ -447,18 +461,170 @@ function formatFloor(floorNo: number): string {
 }
 //#endregion
 
+//#region ◆格式化垂直補層樓層名 [formatVerticalPatchFloor]
+function formatVerticalPatchFloor(index: number): string {
+  return `PATCH_V${String(index).padStart(2, '0')}`;
+}
+//#endregion
+
+//#region ◆座標有效性 [hasValidCoordinates]
+function hasValidCoordinates(building: BuildingPart): boolean {
+  for (const polygon of building.coordinates ?? []) {
+    for (const pt of polygon) {
+      if (pt && pt.length >= 3 && Number.isFinite(pt[2])) return true;
+    }
+  }
+  return false;
+}
+//#endregion
+
+//#region ◆選擇補層模板 [pickPatchTemplate]
+function pickPatchTemplate(lower: BuildingPart, upper: BuildingPart): BuildingPart | null {
+  const candidates = [lower, upper].filter(hasValidCoordinates);
+  if (candidates.length === 0) return null;
+
+  const score = (b: BuildingPart): number => {
+    const ring = getFootprintRing(b);
+    const area = polygonArea2D(ring);
+    const abnormalPenalty = b.isAbnormal ? 0 : 1_000_000;
+    return abnormalPenalty + area;
+  };
+
+  return candidates.reduce((best, cur) => (score(cur) > score(best) ? cur : best));
+}
+//#endregion
+
+//#region ◆是否為已勾選異常樓層 [isSelectedAbnormalFloor]
+function isSelectedAbnormalFloor(
+  building: BuildingPart,
+  selectedRowIds: Set<string>,
+): boolean {
+  return !!(building.isAbnormal && building.rowId && selectedRowIds.has(building.rowId));
+}
+//#endregion
+
+//#region ◆依建號分組 [groupByBuildingNo]
+function groupByBuildingNo(buildings: BuildingPart[]): Map<string, BuildingPart[]> {
+  const groups = new Map<string, BuildingPart[]>();
+  for (const b of buildings) {
+    const key = b.buildingNo || 'UNKNOWN_NO';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(b);
+  }
+  return groups;
+}
+//#endregion
+
+//#region ◆一般樓層號是否存在 [regularFloorNoExists]
+function regularFloorNoExists(
+  group: BuildingPart[],
+  floorNo: number,
+  pending: BuildingPart[],
+): boolean {
+  const all = [...group, ...pending];
+  return all.some((b) => {
+    const key = parseFloorSortKey(b.floor);
+    return key.category === 'regular' && key.number === floorNo;
+  });
+}
+//#endregion
+
+//#region ◆樓層標籤是否存在 [floorLabelExists]
+function floorLabelExists(
+  group: BuildingPart[],
+  floor: string,
+  pending: BuildingPart[],
+): boolean {
+  const all = [...group, ...pending];
+  return all.some((b) => b.floor === floor);
+}
+//#endregion
+
+//#region ◆找缺號邊界樓層 [findBoundingRegularFloors]
+function findBoundingRegularFloors(
+  group: BuildingPart[],
+  floorNo: number,
+): { lower: BuildingPart | null; upper: BuildingPart | null } {
+  let lower: BuildingPart | null = null;
+  let upper: BuildingPart | null = null;
+
+  for (const b of group) {
+    const key = parseFloorSortKey(b.floor);
+    if (key.category !== 'regular') continue;
+    if (key.number < floorNo) lower = b;
+    if (key.number > floorNo && !upper) upper = b;
+  }
+
+  return { lower, upper };
+}
+//#endregion
+
+//#region ◆計算缺號高度槽位 [computeMissingFloorHeightSlot]
+function computeMissingFloorHeightSlot(
+  lower: BuildingPart | null,
+  upper: BuildingPart | null,
+  floorNo: number,
+): { minZ: number; maxZ: number } | null {
+  const lowerBounds = lower ? getHeightBounds(lower) : null;
+  const upperBounds = upper ? getHeightBounds(upper) : null;
+
+  if (!lowerBounds && !upperBounds) return null;
+
+  const lowerMax = lowerBounds?.maxZ ?? (upperBounds!.minZ - DEFAULT_FLOOR_HEIGHT);
+  const upperMin = upperBounds?.minZ ?? (lowerBounds!.maxZ + DEFAULT_FLOOR_HEIGHT);
+
+  if (lower && upper) {
+    const lowerNo = parseFloorSortKey(lower.floor).number;
+    const upperNo = parseFloorSortKey(upper.floor).number;
+    const missingBetween = upperNo - lowerNo - 1;
+    if (missingBetween <= 0) {
+      return {
+        minZ: lowerMax,
+        maxZ: lowerMax + DEFAULT_FLOOR_HEIGHT,
+      };
+    }
+    const span = upperMin - lowerMax;
+    const slotHeight = span > 0 ? span / (missingBetween + 1) : DEFAULT_FLOOR_HEIGHT;
+    const k = floorNo - lowerNo;
+    return {
+      minZ: lowerMax + (k - 1) * slotHeight,
+      maxZ: lowerMax + k * slotHeight,
+    };
+  }
+
+  if (lowerBounds) {
+    const lowerNo = lower ? parseFloorSortKey(lower.floor).number : floorNo - 1;
+    const k = floorNo - lowerNo;
+    return {
+      minZ: lowerMax + (k - 1) * DEFAULT_FLOOR_HEIGHT,
+      maxZ: lowerMax + k * DEFAULT_FLOOR_HEIGHT,
+    };
+  }
+
+  const upperNo = upper ? parseFloorSortKey(upper.floor).number : floorNo + 1;
+  const k = upperNo - floorNo;
+  return {
+    minZ: upperMin - k * DEFAULT_FLOOR_HEIGHT,
+    maxZ: upperMin - (k - 1) * DEFAULT_FLOOR_HEIGHT,
+  };
+}
+//#endregion
+
 //#region ◆建立補齊樓層 [createPatchedBuilding]
 /**
  * 建立補齊樓層
- * 以鄰近異常樓層為模板，複製幾何並調整高度，產生新的 BuildingPart
+ * 以鄰近樓層為模板，複製幾何並調整高度，產生新的 BuildingPart
  */
 function createPatchedBuilding(
   template: BuildingPart,
-  floorNo: number,
+  floor: string,
   minZ: number,
   maxZ: number,
   buildingNo: string,
-): BuildingPart {
+  fixMessage?: string,
+): BuildingPart | null {
+  if (!hasValidCoordinates(template)) return null;
+
   const sourceMinZ = template.minHeight ?? minZ;
   const sourceMaxZ = template.maxHeight ?? maxZ;
   const coordinates = shiftCoordinatesZ(
@@ -469,7 +635,6 @@ function createPatchedBuilding(
     maxZ,
   );
 
-  const floor = formatFloor(floorNo);
   const id = `PATCH_${buildingNo}_${floor}_${crypto.randomUUID().slice(0, 8)}`;
 
   const building: BuildingPart = {
@@ -483,78 +648,205 @@ function createPatchedBuilding(
     isValid: true,
     errorMessages: [],
     isFixed: true,
-    fixMessages: [`缺漏樓層補齊：已補齊缺漏樓層 ${floor}`],
+    fixMessages: [fixMessage ?? `缺漏樓層補齊：已補齊缺漏樓層 ${floor}`],
     isAbnormal: false,
     rowId: crypto.randomUUID(),
   };
 
   computeHeightBounds(building);
+  if (
+    building.minHeight == null
+    || building.maxHeight == null
+    || !Number.isFinite(building.minHeight)
+    || !Number.isFinite(building.maxHeight)
+  ) {
+    return null;
+  }
+
   return building;
 }
 //#endregion
 
 //【修復主流程】=================================================================
 
-//#region ◆缺漏樓層補齊 [applyGapRepair]
-/**
- * 缺漏樓層補齊
- * 針對同一建號內已勾選的異常樓層，偵測上下樓層之間的缺漏層並補齊
- * @param buildings 原始建物清單
- * @param selectedRowIds 使用者勾選的 rowId 集合
- * @param maxMissingFloors 缺漏層數上限 X，超過則跳過該區段
- */
-export function applyGapRepair(
-  buildings: BuildingPart[],
+//#region ◆樓層號跳號補齊 [applyFloorNumberGapRepair]
+function applyFloorNumberGapRepair(
+  result: BuildingPart[],
   selectedRowIds: Set<string>,
   maxMissingFloors: number,
-): { buildings: BuildingPart[]; insertedCount: number; skippedGaps: number } {
-  // 深拷貝原始資料，避免污染輸入
-  const result = buildings.map((b) => ({ ...b, coordinates: cloneCoordinates(b.coordinates ?? []) }));
+): GapRepairOutcome {
   const inserted: BuildingPart[] = [];
   let skippedGaps = 0;
+  let skippedNoTemplate = 0;
 
-  // 依建號分組，僅處理已勾選的異常樓層
-  const groups = new Map<string, BuildingPart[]>();
-  for (const b of result) {
-    if (!b.isAbnormal || !b.rowId || !selectedRowIds.has(b.rowId)) continue;
-    const key = b.buildingNo || 'UNKNOWN_NO';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(b);
+  const allGroups = groupByBuildingNo(result);
+
+  for (const [buildingNo, group] of allGroups) {
+    const hasSelected = group.some((b) => isSelectedAbnormalFloor(b, selectedRowIds));
+    if (!hasSelected) continue;
+
+    const selectedRegularNos = group
+      .filter((b) => isSelectedAbnormalFloor(b, selectedRowIds))
+      .map((b) => parseFloorSortKey(b.floor))
+      .filter((key) => key.category === 'regular')
+      .map((key) => key.number);
+
+    if (selectedRegularNos.length === 0) continue;
+
+    const minSelected = Math.min(...selectedRegularNos);
+    const maxSelected = Math.max(...selectedRegularNos);
+
+    const missingFloorNos: number[] = [];
+    for (let n = minSelected + 1; n < maxSelected; n++) {
+      if (!regularFloorNoExists(group, n, inserted)) {
+        missingFloorNos.push(n);
+      }
+    }
+
+    if (missingFloorNos.length === 0) continue;
+
+    // 連續缺號區段超過上限則跳過
+    let runStart = 0;
+    while (runStart < missingFloorNos.length) {
+      let runEnd = runStart;
+      while (
+        runEnd + 1 < missingFloorNos.length
+        && missingFloorNos[runEnd + 1] === missingFloorNos[runEnd]! + 1
+      ) {
+        runEnd++;
+      }
+      const runLength = runEnd - runStart + 1;
+      if (runLength > maxMissingFloors) {
+        skippedGaps++;
+        runStart = runEnd + 1;
+        continue;
+      }
+
+      for (let i = runStart; i <= runEnd; i++) {
+        const floorNo = missingFloorNos[i]!;
+        const floor = formatFloor(floorNo);
+        if (regularFloorNoExists(group, floorNo, inserted)) continue;
+
+        const { lower, upper } = findBoundingRegularFloors(group, floorNo);
+        if (!lower && !upper) {
+          skippedNoTemplate++;
+          continue;
+        }
+
+        const template = pickPatchTemplate(lower ?? upper!, upper ?? lower!);
+        if (!template) {
+          skippedNoTemplate++;
+          continue;
+        }
+
+        const slot = computeMissingFloorHeightSlot(lower, upper, floorNo);
+        if (!slot) {
+          skippedNoTemplate++;
+          continue;
+        }
+
+        const patched = createPatchedBuilding(
+          template,
+          floor,
+          slot.minZ,
+          slot.maxZ,
+          buildingNo,
+          `缺漏樓層補齊：已補齊缺漏樓層 ${floor}`,
+        );
+        if (patched) {
+          inserted.push(patched);
+        } else {
+          skippedNoTemplate++;
+        }
+      }
+
+      runStart = runEnd + 1;
+    }
   }
 
-  for (const [buildingNo, selectedFloors] of groups) {
-    // 依樓層號排序
-    const sorted = selectedFloors
-      .map((b) => ({ building: b, floorNo: parseFloorNumber(b.floor) }))
-      .filter((x): x is { building: BuildingPart; floorNo: number } => x.floorNo !== null)
-      .sort((a, b) => compareFloors(a.building.floor, b.building.floor));
+  return {
+    buildings: [...result, ...inserted],
+    insertedCount: inserted.length,
+    skippedGaps,
+    skippedNoTemplate,
+  };
+}
+//#endregion
 
-    // 檢查相鄰樓層之間的缺漏
+//#region ◆垂直空缺補齊 [applyVerticalGapRepair]
+function applyVerticalGapRepair(
+  result: BuildingPart[],
+  selectedRowIds: Set<string>,
+  maxMissingFloors: number,
+): GapRepairOutcome {
+  const inserted: BuildingPart[] = [];
+  let skippedGaps = 0;
+  let skippedNoTemplate = 0;
+
+  const allGroups = groupByBuildingNo(result);
+
+  for (const [buildingNo, group] of allGroups) {
+    const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
+
     for (let i = 1; i < sorted.length; i++) {
       const lower = sorted[i - 1]!;
       const upper = sorted[i]!;
-      const missing = upper.floorNo - lower.floorNo - 1;
 
-      if (missing <= 0) continue;
+      if (
+        !isSelectedAbnormalFloor(lower, selectedRowIds)
+        && !isSelectedAbnormalFloor(upper, selectedRowIds)
+      ) {
+        continue;
+      }
 
-      if (missing > maxMissingFloors) {
+      const lowerBounds = getHeightBounds(lower);
+      const upperBounds = getHeightBounds(upper);
+      if (!lowerBounds || !upperBounds) {
+        skippedNoTemplate++;
+        continue;
+      }
+
+      const gap = upperBounds.minZ - lowerBounds.maxZ;
+      if (gap <= getMaxFloorGap()) continue;
+
+      const layersToInsert = Math.max(1, Math.ceil(gap / DEFAULT_FLOOR_HEIGHT) - 1);
+      if (layersToInsert > maxMissingFloors) {
         skippedGaps++;
         continue;
       }
 
-      // 在 lower.maxHeight 與 upper.minHeight 之間均分缺漏層的高度
-      const lowerMax = lower.building.maxHeight ?? 0;
-      const upperMin = upper.building.minHeight ?? lowerMax + DEFAULT_FLOOR_HEIGHT * (missing + 1);
-      const span = upperMin - lowerMax;
-      const slotHeight = span > 0 ? span / (missing + 1) : DEFAULT_FLOOR_HEIGHT;
+      const template = pickPatchTemplate(lower, upper);
+      if (!template) {
+        skippedNoTemplate++;
+        continue;
+      }
 
-      for (let k = 1; k <= missing; k++) {
-        const floorNo = lower.floorNo + k;
-        const minZ = lowerMax + (k - 1) * slotHeight;
-        const maxZ = lowerMax + k * slotHeight;
-        inserted.push(
-          createPatchedBuilding(lower.building, floorNo, minZ, maxZ, buildingNo),
+      const slotHeight = gap / (layersToInsert + 1);
+
+      for (let k = 1; k <= layersToInsert; k++) {
+        let patchIndex = k;
+        let floor = formatVerticalPatchFloor(patchIndex);
+        while (floorLabelExists(group, floor, inserted)) {
+          patchIndex++;
+          floor = formatVerticalPatchFloor(patchIndex);
+        }
+
+        const minZ = lowerBounds.maxZ + (k - 1) * slotHeight;
+        const maxZ = lowerBounds.maxZ + k * slotHeight;
+
+        const patched = createPatchedBuilding(
+          template,
+          floor,
+          minZ,
+          maxZ,
+          buildingNo,
+          `缺漏樓層補齊：已補垂直空缺樓層 ${floor}`,
         );
+        if (patched) {
+          inserted.push(patched);
+        } else {
+          skippedNoTemplate++;
+        }
       }
     }
   }
@@ -563,7 +855,29 @@ export function applyGapRepair(
     buildings: [...result, ...inserted],
     insertedCount: inserted.length,
     skippedGaps,
+    skippedNoTemplate,
   };
+}
+//#endregion
+
+//#region ◆缺漏樓層補齊 [applyGapRepair]
+/**
+ * 缺漏樓層補齊
+ * 依策略補齊同建號內的缺漏樓層
+ */
+export function applyGapRepair(
+  buildings: BuildingPart[],
+  selectedRowIds: Set<string>,
+  maxMissingFloors: number,
+  strategy: GapRepairStrategy = 'floorNumberGap',
+): GapRepairOutcome {
+  const result = buildings.map((b) => ({ ...b, coordinates: cloneCoordinates(b.coordinates ?? []) }));
+
+  if (strategy === 'verticalGap') {
+    return applyVerticalGapRepair(result, selectedRowIds, maxMissingFloors);
+  }
+
+  return applyFloorNumberGapRepair(result, selectedRowIds, maxMissingFloors);
 }
 //#endregion
 
@@ -1238,15 +1552,39 @@ export function applyBuildingRepair(
   const selectedRowIds = new Set(request.selectedRowIds);
 
   if (request.mode === 'gapRepair') {
-    const { buildings: updated, insertedCount, skippedGaps } = applyGapRepair(
+    const strategy = request.gapRepairStrategy ?? 'floorNumberGap';
+    const {
+      buildings: repaired,
+      insertedCount,
+      skippedGaps,
+      skippedNoTemplate,
+    } = applyGapRepair(
       buildings,
       selectedRowIds,
       request.maxMissingFloors,
+      strategy,
     );
 
-    const parts = [`已補齊 ${insertedCount} 筆缺漏樓層`];
+    const updated = [...repaired];
+    clearResolvedVerticalErrors(updated);
+
+    const parts: string[] = [];
+    if (insertedCount > 0) {
+      const label = strategy === 'verticalGap'
+        ? `已補齊 ${insertedCount} 筆垂直空缺樓層`
+        : `已補齊 ${insertedCount} 筆缺漏樓層（樓層號跳號）`;
+      parts.push(label);
+    } else {
+      const hints = strategy === 'verticalGap'
+        ? '未發現可補齊的垂直斷層（請確認已勾選相關異常樓層，且落差超過閾值）'
+        : '未發現可補齊的樓層號缺層（若為垂直斷層，請改用「垂直空缺一律補」）';
+      parts.push(hints);
+    }
     if (skippedGaps > 0) {
-      parts.push(`跳過 ${skippedGaps} 段缺漏超過上限的區間`);
+      parts.push(`跳過 ${skippedGaps} 段超過上限的區間`);
+    }
+    if (skippedNoTemplate > 0) {
+      parts.push(`跳過 ${skippedNoTemplate} 段無可用幾何模板`);
     }
 
     return {
@@ -1255,6 +1593,8 @@ export function applyBuildingRepair(
       fixedCount: 0,
       skippedCount: 0,
       skippedGaps,
+      skippedNoTemplate,
+      gapRepairStrategy: strategy,
       summary: parts.join('，'),
     };
   }

@@ -187,6 +187,9 @@ flowchart TD
   - `displacement`
 - `selectedRowIds`：使用者勾選的樓層
 - `maxMissingFloors`：缺漏樓層補齊時允許補齊的缺漏層數上限
+- `gapRepairStrategy`：缺漏樓層補齊策略
+  - `floorNumberGap`：樓層號跳號才補（預設）
+  - `verticalGap`：垂直空缺一律補
 - `horizontalCorrection`：位移修正是否啟用水平修正
 - `adjacentFloorHorizontalCorrection`：位移修正是否啟用相鄰樓層水平對齊（僅經緯度）
 - `verticalOverlapCorrection`：位移修正是否啟用垂直重疊修正（僅 Z 軸）
@@ -195,49 +198,74 @@ flowchart TD
 ## 5. 缺漏樓層補齊邏輯
 
 ### 5.1 目的
-缺漏樓層補齊對應 `applyGapRepair()`，核心目標是補齊同建號建物中，已選取異常樓層之間的缺漏樓層。
+缺漏樓層補齊對應 `applyGapRepair()`，依使用者選擇的 `gapRepairStrategy` 補齊同建號建物中的缺漏樓層。
 
-### 5.2 處理流程
-`applyGapRepair()` 的處理方式如下：
+### 5.2 補齊策略
+
+| 策略 | 代碼 | 觸發條件 |
+|------|------|---------|
+| 樓層號跳號才補 | `floorNumberGap` | 一般地上樓層（regular）編號有缺層，例如 001 與 003 之間缺 002 |
+| 垂直空缺一律補 | `verticalGap` | 物理相鄰樓層之間 Z 軸落差大於 `MaxFloorGap`（預設 3.0m），樓層號可連續 |
+
+### 5.3 處理流程（共通）
 
 1. 複製原始建物資料，避免直接污染輸入
-2. 只保留 `isAbnormal = true` 且被使用者勾選的樓層
-3. 依 `buildingNo` 分組
-4. 依樓層排序後，比較相鄰樓層的樓層號碼差距
-5. 若樓層之間有缺層，且缺漏數未超過 `maxMissingFloors`，則建立補齊樓層
-6. 將新樓層加入結果清單
+2. 依 `buildingNo` 分組，僅處理「至少有一筆已勾選異常樓層」的建號群組
+3. 依策略偵測缺漏並建立補齊樓層
+4. 將新樓層加入結果清單
+5. 呼叫 `clearResolvedVerticalErrors()` 清除已解決的垂直斷層／重疊訊息
 
-### 5.3 補齊樓層建立方式
+### 5.4 策略 A：樓層號跳號（`applyFloorNumberGapRepair`）
+
+1. 掃描建號內**全部樓層**（非僅已勾選異常樓層）
+2. 僅以 `regular` 類樓層參與缺號計算（排除 B1、R01 等，避免與 001 數字衝突）
+3. 在已勾選異常樓層的 regular 編號區間內，找出不存在的缺號
+4. 連續缺號區段長度超過 `maxMissingFloors` 則跳過該區段
+5. 插入前檢查該樓層號是否已存在，避免重複補層
+6. 高度以缺號上下最近的 regular 樓層之 `maxHeight`／`minHeight` 均分；無法推算時使用預設層高 `3.0m`
+7. 補齊樓層命名為三位數，例如 `002`
+
+### 5.5 策略 B：垂直空缺（`applyVerticalGapRepair`）
+
+1. 依 `compareFloors` 排序建號內全部樓層，檢查物理相鄰對
+2. 僅當相鄰對**至少一端**為已勾選異常樓層時才處理
+3. 若 `upper.minHeight - lower.maxHeight > MaxFloorGap`，判定為垂直斷層
+4. 補層數：`max(1, ceil(gap / 3.0) - 1)`；超過 `maxMissingFloors` 則跳過
+5. 在斷層區間均分高度槽位
+6. 補齊樓層命名為 `PATCH_V01`、`PATCH_V02`…（區段內遞增，避免與既有樓層衝突）
+
+### 5.6 補齊樓層建立方式
 補齊樓層由 `createPatchedBuilding()` 建立，主要特性如下：
 
-- 以鄰近已選取樓層作為幾何模板
+- 以鄰近樓層作為幾何模板（`pickPatchTemplate` 優先選有座標、非異常、footprint 較大者）
+- 模板無有效座標時不建立補層
 - 複製原有座標後，透過 `shiftCoordinatesZ()` 線性調整高度
-- 樓層名稱會格式化為三位數，例如 `001`
 - 新增資料會直接標記為：
   - `isValid = true`
   - `isFixed = true`
   - `isAbnormal = false`
-- 修復訊息會寫入 `缺漏樓層補齊：已補齊缺漏樓層 XXX`
+- 修復訊息：
+  - 號碼缺層：`缺漏樓層補齊：已補齊缺漏樓層 XXX`
+  - 垂直補層：`缺漏樓層補齊：已補垂直空缺樓層 PATCH_Vxx`
 
-### 5.4 高度推算方式
-補齊缺漏樓層時，程式會以：
-
-- 下層的 `maxHeight`
-- 上層的 `minHeight`
-
-作為區間，平均切分為多個樓層高度槽位。若無法合理推算，則使用預設層高 `3.0m`。
-
-### 5.5 跳過條件
+### 5.7 跳過條件
 以下情況不會補齊：
 
-- 缺漏樓層數小於等於 `0`
-- 缺漏樓層數大於 `maxMissingFloors`
-- 樓層字串無法解析為可排序的正整數
+- 建號內無已勾選異常樓層
+- 樓層號跳號模式：區間內無缺號，或連續缺號超過 `maxMissingFloors`
+- 垂直空缺模式：落差未超過 `MaxFloorGap`，或相鄰對兩端均未勾選
+- 補層數超過 `maxMissingFloors`
+- 目標樓層號／標籤已存在
+- 上下鄰層無可用幾何模板
 
 修復摘要中會統計：
 
 - `insertedCount`：實際補齊筆數
-- `skippedGaps`：因超過上限而跳過的缺漏區段數
+- `skippedGaps`：因超過上限而跳過的區段數
+- `skippedNoTemplate`：因無可用模板而跳過的區段數
+
+### 5.8 修復後異常清除
+`applyBuildingRepair()` 在缺漏樓層補齊完成後會呼叫 `clearResolvedVerticalErrors()`，重新檢核同建號相鄰樓層的垂直連續性，並移除已解決的「垂直斷層」「垂直重疊」訊息。
 
 ## 6. 位移修正邏輯
 

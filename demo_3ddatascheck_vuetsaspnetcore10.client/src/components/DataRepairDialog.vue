@@ -56,7 +56,21 @@
             相鄰樓層水平對齊僅調整經緯度；垂直重疊修正僅調整 Z 軸。建議分步執行並檢視結果。
           </p>
 
-          <!--缺漏樓層補齊專用：缺漏層數上限設定（僅 gapRepair 模式顯示）-->
+          <!--缺漏樓層補齊專用：補齊策略與缺漏層數上限（僅 gapRepair 模式顯示）-->
+          <div v-if="repairMode === 'gapRepair'" class="gap-strategy-row mode-row">
+            <span class="field-label">補齊依據</span>
+            <label class="mode-option">
+              <input v-model="gapRepairStrategy" type="radio" value="floorNumberGap" />
+              樓層號跳號
+            </label>
+            <label class="mode-option">
+              <input v-model="gapRepairStrategy" type="radio" value="verticalGap" />
+              垂直空缺
+            </label>
+          </div>
+          <p v-if="repairMode === 'gapRepair'" class="gap-hint">
+            {{ gapRepairStrategyHint }}
+          </p>
           <div v-if="repairMode === 'gapRepair'" class="gap-setting">
             <label class="field-label" for="max-missing-floors">缺漏層數上限 X</label>
             <input id="max-missing-floors"
@@ -144,7 +158,7 @@
   } from 'vue';
   import interact from 'interactjs'; // 拖曳與縮放功能庫
   import type { BuildingPart } from '../types/BuildingPart.ts';
-  import type { RepairMode, RepairRequest } from '../utils/buildingRepair.ts';
+  import type { GapRepairStrategy, RepairMode, RepairRequest } from '../utils/buildingRepair.ts';
   import { parseFloorNumber } from '../utils/buildingRepair.ts'; // 將樓層字串轉為數字，供排序使用
 
   //【宣告】=====================================================================
@@ -173,6 +187,9 @@
 
   // 缺漏樓層補齊時允許補齊的缺漏層數上限 X（預設 99）
   const maxMissingFloors = ref(99);
+
+  // 缺漏樓層補齊策略（預設樓層號跳號才補）
+  const gapRepairStrategy = ref<GapRepairStrategy>('floorNumberGap');
 
   // 位移修正子選項（可複選，預設僅水平修正）
   const horizontalCorrection = ref(true);
@@ -214,12 +231,21 @@
     return true;
   });
 
+  // 補齊依據說明：僅顯示目前選到的策略
+  const gapRepairStrategyHint = computed(() => {
+    if (gapRepairStrategy.value === 'verticalGap') {
+      return '相鄰樓層 Z 軸斷層超過閾值時補層（至少一端為已勾選異常樓層）。';
+    }
+    return '僅在 001→003 等編號缺層時補齊。';
+  });
+
   //【生命週期】===================================================================
   // 監聽視窗開啟：重置表單狀態並初始化 interact.js
   watch(() => props.modelValue, async (visible) => {
     if (visible) {
       resetSelection();              // 預設全選所有異常樓層
       maxMissingFloors.value = 99;   // 重置缺漏層數上限
+      gapRepairStrategy.value = 'floorNumberGap'; // 重置補齊策略
       repairMode.value = 'gapRepair'; // 重置為缺漏樓層補齊模式
       horizontalCorrection.value = true;  // 重置位移子選項
       adjacentFloorHorizontalCorrection.value = false;
@@ -310,6 +336,7 @@
       mode: repairMode.value,
       selectedRowIds: [...selectedRowIds.value],
       maxMissingFloors: Math.max(1, maxMissingFloors.value || 99), // 確保至少為 1
+      gapRepairStrategy: gapRepairStrategy.value,
       horizontalCorrection: horizontalCorrection.value,
       adjacentFloorHorizontalCorrection: adjacentFloorHorizontalCorrection.value,
       verticalCorrection: verticalCorrection.value,
@@ -476,7 +503,8 @@
     user-select: none;
   }
 
-  .displacement-hint {
+  .displacement-hint,
+  .gap-hint {
     margin: 0;
     font-size: 12px;
     color: #6c757d;
