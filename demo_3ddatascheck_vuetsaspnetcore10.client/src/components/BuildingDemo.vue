@@ -61,9 +61,9 @@
   import 'cesium/Source/Widgets/widgets.css';                   // Cesium 預設樣式
   import type { BuildingPart } from '../types/BuildingPart.ts'; // 建物物件類型定義
   import BuildingCheckDialog from './BuildingCheckDialog.vue';
-  import { applyBuildingRepair } from '../utils/buildingRepair.ts';
+  import { applyBuildingRepair, pickVerticalAnchorBuilding, shiftBuildingZ } from '../utils/buildingRepair.ts';
   import type { RepairRequest } from '../utils/buildingRepair.ts';
-  import { loadBuildingDetectionConfig } from '../utils/buildingDetectionConfig.ts';
+  import { getGroundFloorBottomThreshold, loadBuildingDetectionConfig } from '../utils/buildingDetectionConfig.ts';
 
   // 套件
   import Swal from 'sweetalert2';
@@ -768,28 +768,97 @@
   };
   //#endregion
 
+  //#region ◆地形貼地後處理 [applyTerrainGrounding]
+  /**
+   * 以建號錨點樓層貼齊地形，將同建號全部樓層統一下移
+   */
+  const applyTerrainGrounding = async (
+    buildingObjs: BuildingPart[],
+    selectedRowIds: Set<string>,
+  ): Promise<number> => {
+    if (!viewer) return 0;
+
+    const byBuildingNo = new Map<string, BuildingPart[]>();
+    for (const building of buildingObjs) {
+      const key = building.buildingNo || 'UNKNOWN_NO';
+      if (!byBuildingNo.has(key)) byBuildingNo.set(key, []);
+      byBuildingNo.get(key)!.push(building);
+    }
+
+    const threshold = getGroundFloorBottomThreshold();
+    let groundedBuildingCount = 0;
+
+    for (const group of byBuildingNo.values()) {
+      const anchor = pickVerticalAnchorBuilding(group, selectedRowIds);
+      if (!anchor?.coordinates?.length) continue;
+
+      const minZ = anchor.minHeight ?? getBuildingMinHeight(anchor);
+      if (minZ == null) continue;
+
+      const centroid = getBuildingCentroid(anchor);
+      if (!centroid) continue;
+
+      try {
+        const samples = [Cesium.Cartographic.fromDegrees(centroid.lon, centroid.lat)];
+        const updated = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, samples);
+        const groundZ = updated[0]?.height ?? 0;
+        const gap = minZ - groundZ;
+        if (gap <= threshold) continue;
+
+        const shiftDown = groundZ - minZ;
+        for (const building of group) {
+          shiftBuildingZ(building, shiftDown);
+          building.isFixed = true;
+          const message = `地形貼地修補：已將建號 ${building.buildingNo} 整棟下移 ${Math.abs(shiftDown).toFixed(1)}m 貼齊地形`;
+          if (!building.fixMessages.includes(message)) {
+            building.fixMessages.push(message);
+          }
+        }
+        groundedBuildingCount += group.length;
+      } catch (error) {
+        console.warn('地形貼地取樣失敗，略過建號', anchor.buildingNo, error);
+      }
+    }
+
+    return groundedBuildingCount;
+  };
+  //#endregion
+
   //#region ◆資料修復處理 [handleRepairBuildings]
   /**
   * 資料修復處理
   */
   const handleRepairBuildings = async (request: RepairRequest) => {
     try {
+      const selectedRowIds = new Set(request.selectedRowIds);
       const result = applyBuildingRepair(buildings.value, request);
-      buildings.value = result.buildings.map((b) => ({
+      let repairedBuildings = result.buildings.map((b) => ({
         ...b,
         rowId: b.rowId ?? crypto.randomUUID(),
         errorMessages: [...(b.errorMessages ?? [])],
         fixMessages: [...(b.fixMessages ?? [])],
       }));
 
+      let terrainGroundedCount = 0;
+      if (request.mode === 'displacement' && request.terrainGrounding) {
+        terrainGroundedCount = await applyTerrainGrounding(repairedBuildings, selectedRowIds);
+      }
+
+      buildings.value = repairedBuildings;
+
       if (!viewer) return;
 
       await detectTerrainAbnormal(buildings.value);
       renderBuildingsOnMap();
 
+      const summaryParts = [result.summary];
+      if (terrainGroundedCount > 0) {
+        summaryParts.push(`【地形貼地】已處理 ${terrainGroundedCount} 筆樓層`);
+      }
+
       Swal.fire({
         title: '資料修復完成',
-        html: result.summary,
+        html: summaryParts.join('<br>'),
         icon: 'success',
       });
     }

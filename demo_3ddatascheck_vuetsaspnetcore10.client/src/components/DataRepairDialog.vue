@@ -51,9 +51,13 @@
               <input v-model="verticalCorrection" type="checkbox" />
               垂直修正
             </label>
+            <label class="mode-option">
+              <input v-model="terrainGrounding" type="checkbox" />
+              地形貼地
+            </label>
           </div>
           <p v-if="repairMode === 'displacement'" class="displacement-hint">
-            相鄰樓層水平對齊僅調整經緯度；垂直重疊修正僅調整 Z 軸。建議分步執行並檢視結果。
+            垂直重疊修正以最低 regular 樓層（如 1F）為錨點重堆疊，僅移動已勾選樓層，避免整棟上浮。建議先執行垂直重疊修正並檢視結果；若 1F 仍離地過高，再勾選「地形貼地」將整棟下移貼齊地形。
           </p>
 
           <!--缺漏樓層補齊專用：補齊策略與缺漏層數上限（僅 gapRepair 模式顯示）-->
@@ -196,6 +200,7 @@
   const adjacentFloorHorizontalCorrection = ref(false);
   const verticalCorrection = ref(false);
   const verticalOverlapCorrection = ref(false);
+  const terrainGrounding = ref(false);
 
   // 使用者勾選要修復的樓層 rowId 清單
   const selectedRowIds = ref<string[]>([]);
@@ -226,7 +231,8 @@
       return horizontalCorrection.value
         || adjacentFloorHorizontalCorrection.value
         || verticalCorrection.value
-        || verticalOverlapCorrection.value;
+        || verticalOverlapCorrection.value
+        || terrainGrounding.value;
     }
     return true;
   });
@@ -251,6 +257,7 @@
       adjacentFloorHorizontalCorrection.value = false;
       verticalCorrection.value = false;
       verticalOverlapCorrection.value = false;
+      terrainGrounding.value = false;
       await nextTick();              // 等待 DOM 更新完成，確保 dialogRef 已經指向正確的元素
       initInteract();                // 初始化 interact.js，綁定拖曳與縮放事件
     } else {
@@ -341,6 +348,7 @@
       adjacentFloorHorizontalCorrection: adjacentFloorHorizontalCorrection.value,
       verticalCorrection: verticalCorrection.value,
       verticalOverlapCorrection: verticalOverlapCorrection.value,
+      terrainGrounding: terrainGrounding.value,
     });
     close();
   };

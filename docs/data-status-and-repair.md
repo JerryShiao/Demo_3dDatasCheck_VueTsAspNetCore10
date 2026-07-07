@@ -194,6 +194,7 @@ flowchart TD
 - `adjacentFloorHorizontalCorrection`：位移修正是否啟用相鄰樓層水平對齊（僅經緯度）
 - `verticalOverlapCorrection`：位移修正是否啟用垂直重疊修正（僅 Z 軸）
 - `verticalCorrection`：位移修正是否啟用垂直修正
+- `terrainGrounding`：位移修正是否啟用地形貼地（將錨點樓層貼齊地形後整棟下移，預設關閉）
 
 ## 5. 缺漏樓層補齊邏輯
 
@@ -325,22 +326,33 @@ flowchart TD
 本步驟不會清除「垂直重疊」錯誤訊息。
 
 ### 6.5 垂直重疊修正
-垂直重疊修正由 `applyVerticalOverlapRepair()` 執行，目標是解決相鄰樓層在 Z 軸上的重疊。
+垂直重疊修正由 `applyVerticalOverlapRepair()` 執行，目標是解決相鄰樓層在 Z 軸上的重疊，並避免逐對上移造成整棟建物上浮。
 
 處理方式如下：
 
 1. 依建號分組並按樓層排序
-2. 逐組檢查相鄰樓層是否出現 `gap < -FloorGapTolerance`（閾值與後端 `BuildingAbnormalDetection.FloorGapTolerance` 同步，預設 `-0.5m`）
-3. 若上層為已選取異常樓層，則上移上層使其底部貼齊下層頂部
-4. 否則若下層為已選取異常樓層，則下移下層使其頂部貼齊上層底部
+2. 檢查是否存在 `gap < -FloorGapTolerance` 的相鄰對（閾值與後端 `BuildingAbnormalDetection.FloorGapTolerance` 同步，預設 `-0.5m`）；若無重疊則跳過該建號
+3. 選擇錨點樓層（優先：未勾選的最低 regular 樓層 → 最低 regular 樓層 → 排序後最低樓層）；錨點不移動
+4. 自錨點向上／向下規劃各層目標 `minZ`／`maxZ`（維持原樓層厚度，僅平移）
+5. 僅對重疊區段內、已勾選且為異常的樓層套用位移
+6. 若錨點規劃失敗，退回逐對修正：雙選時取最小位移方向，同距離優先下移
 
 修復成功後會：
 
-- 調整整個樓層的 Z 值
+- 調整已勾選樓層的 Z 值（錨點樓層保持不動）
 - 設定 `isFixed = true`
-- 寫入 `垂直重疊修補` 訊息
+- 寫入 `垂直重疊修補` 訊息（含錨點樓層或相鄰樓層說明）
 
 之後會呼叫 `clearResolvedVerticalErrors()`，重新檢查是否可以移除已解決的垂直異常訊息。
+
+#### 6.5.1 地形貼地（可選後處理）
+若勾選 `terrainGrounding`，在位移修正完成後、`detectTerrainAbnormal` 之前，於 `BuildingDemo.vue` 執行：
+
+1. 對每建號取錨點樓層質心，以 Cesium 地形取樣取得地面 Z
+2. 若 `anchor.minZ - groundZ > GroundFloorBottomThreshold`，將同建號全部樓層統一下移 `groundZ - anchor.minZ`
+3. 寫入 `地形貼地修補` 訊息
+
+建議流程：先執行垂直重疊修正檢視樓層堆疊，若 1F 仍離地過高再勾選地形貼地。
 
 ### 6.6 垂直修正
 垂直修正由 `applyVerticalDisplacementRepair()` 執行，目標是讓異常樓層沿 Z 軸對齊相鄰的正常樓層。

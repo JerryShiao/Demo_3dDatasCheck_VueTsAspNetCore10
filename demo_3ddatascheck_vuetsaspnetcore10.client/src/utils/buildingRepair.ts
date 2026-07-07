@@ -22,6 +22,7 @@ export interface RepairRequest {
   verticalCorrection?: boolean;   // 位移修正：是否執行垂直修正（預設 false）
   adjacentFloorHorizontalCorrection?: boolean; // 位移修正：是否執行相鄰樓層水平對齊（預設 false）
   verticalOverlapCorrection?: boolean; // 位移修正：是否執行垂直重疊修正（Z 軸，預設 false）
+  terrainGrounding?: boolean; // 位移修正：是否將錨點樓層貼地後整棟下移（預設 false）
 }
 
 /** 位移修正子選項 */
@@ -1382,10 +1383,201 @@ export function applyAdjacentFloorHorizontalAlignment(
 }
 //#endregion
 
+//#region ◆垂直重疊修正輔助 [verticalOverlapHelpers]
+
+function isSelectedForRepair(building: BuildingPart, selectedRowIds: Set<string>): boolean {
+  return Boolean(building.isAbnormal && building.rowId && selectedRowIds.has(building.rowId));
+}
+
+/**
+ * 選擇建號內垂直重堆疊的錨點樓層索引（sorted 陣列內）
+ */
+function pickVerticalAnchorIndex(
+  sorted: BuildingPart[],
+  selectedRowIds: Set<string>,
+): number | null {
+  if (sorted.length === 0) return null;
+
+  const regularEntries = sorted
+    .map((building, index) => ({ building, index }))
+    .filter(({ building }) => parseFloorSortKey(building.floor).category === 'regular');
+
+  const unselectedRegular = regularEntries.filter(
+    ({ building }) => !isSelectedForRepair(building, selectedRowIds),
+  );
+  if (unselectedRegular.length > 0) {
+    return unselectedRegular[0]!.index;
+  }
+
+  if (regularEntries.length > 0) {
+    return regularEntries[0]!.index;
+  }
+
+  return 0;
+}
+
+/**
+ * 選擇建號內垂直重堆疊的錨點樓層（供地形貼地等後處理使用）
+ */
+export function pickVerticalAnchorBuilding(
+  group: BuildingPart[],
+  selectedRowIds: Set<string>,
+): BuildingPart | null {
+  const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
+  const anchorIdx = pickVerticalAnchorIndex(sorted, selectedRowIds);
+  return anchorIdx === null ? null : sorted[anchorIdx] ?? null;
+}
+
+/**
+ * 平移建物 Z 座標並重新計算高度上下界
+ */
+export function shiftBuildingZ(building: BuildingPart, dZ: number): void {
+  building.coordinates = translateCoordinatesZ(building.coordinates ?? [], dZ);
+  computeHeightBounds(building);
+}
+
+function getOverlapAdjacentPairs(sorted: BuildingPart[]): Array<[number, number]> {
+  const pairs: Array<[number, number]> = [];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const lowerBounds = getHeightBounds(sorted[i]!);
+    const upperBounds = getHeightBounds(sorted[i + 1]!);
+    if (!lowerBounds || !upperBounds) continue;
+
+    const gap = upperBounds.minZ - lowerBounds.maxZ;
+    if (gap < -getFloorGapTolerance()) {
+      pairs.push([i, i + 1]);
+    }
+  }
+  return pairs;
+}
+
+function getIndicesInvolvedInOverlap(pairs: Array<[number, number]>): Set<number> {
+  const indices = new Set<number>();
+  for (const [lowerIdx, upperIdx] of pairs) {
+    indices.add(lowerIdx);
+    indices.add(upperIdx);
+  }
+  return indices;
+}
+
+function planVerticalRestack(
+  sorted: BuildingPart[],
+  anchorIdx: number,
+): Map<number, { minZ: number; maxZ: number }> {
+  const targets = new Map<number, { minZ: number; maxZ: number }>();
+  const anchorBounds = getHeightBounds(sorted[anchorIdx]!);
+  if (!anchorBounds) return targets;
+
+  const spans = sorted.map((building) => {
+    const bounds = getHeightBounds(building);
+    if (!bounds) return DEFAULT_FLOOR_HEIGHT;
+    const span = bounds.maxZ - bounds.minZ;
+    return span > 0 ? span : DEFAULT_FLOOR_HEIGHT;
+  });
+
+  targets.set(anchorIdx, { ...anchorBounds });
+
+  for (let i = anchorIdx + 1; i < sorted.length; i++) {
+    const prev = targets.get(i - 1);
+    if (!prev) break;
+    const span = spans[i] ?? DEFAULT_FLOOR_HEIGHT;
+    const minZ = prev.maxZ;
+    targets.set(i, { minZ, maxZ: minZ + span });
+  }
+
+  for (let i = anchorIdx - 1; i >= 0; i--) {
+    const next = targets.get(i + 1);
+    if (!next) break;
+    const span = spans[i] ?? DEFAULT_FLOOR_HEIGHT;
+    const maxZ = next.minZ;
+    targets.set(i, { minZ: maxZ - span, maxZ });
+  }
+
+  return targets;
+}
+
+/**
+ * 相鄰重疊對的位移方向：雙選時取最小位移，同距離優先下移
+ */
+function resolveOverlapPairDisplacement(
+  lowerBounds: { minZ: number; maxZ: number },
+  upperBounds: { minZ: number; maxZ: number },
+  upperSelected: boolean,
+  lowerSelected: boolean,
+): { target: 'upper' | 'lower'; dZ: number } | null {
+  const dZUp = lowerBounds.maxZ - upperBounds.minZ;
+  const dZDown = upperBounds.minZ - lowerBounds.maxZ;
+
+  if (upperSelected && lowerSelected) {
+    if (Math.abs(dZUp) < Math.abs(dZDown)) {
+      return { target: 'upper', dZ: dZUp };
+    }
+    if (Math.abs(dZDown) < Math.abs(dZUp)) {
+      return { target: 'lower', dZ: dZDown };
+    }
+    return { target: 'lower', dZ: dZDown };
+  }
+
+  if (upperSelected) {
+    return { target: 'upper', dZ: dZUp };
+  }
+  if (lowerSelected) {
+    return { target: 'lower', dZ: dZDown };
+  }
+  return null;
+}
+
+function applyOverlapPairFallback(
+  sorted: BuildingPart[],
+  pairs: Array<[number, number]>,
+  selectedRowIds: Set<string>,
+): { fixedCount: number; skippedCount: number } {
+  let fixedCount = 0;
+  let skippedCount = 0;
+
+  for (const [lowerIdx, upperIdx] of pairs) {
+    const lower = sorted[lowerIdx]!;
+    const upper = sorted[upperIdx]!;
+    const lowerBounds = getHeightBounds(lower);
+    const upperBounds = getHeightBounds(upper);
+    if (!lowerBounds || !upperBounds) continue;
+
+    const upperSelected = isSelectedForRepair(upper, selectedRowIds);
+    const lowerSelected = isSelectedForRepair(lower, selectedRowIds);
+    const displacement = resolveOverlapPairDisplacement(
+      lowerBounds,
+      upperBounds,
+      upperSelected,
+      lowerSelected,
+    );
+    if (!displacement) {
+      skippedCount++;
+      continue;
+    }
+
+    const target = displacement.target === 'upper' ? upper : lower;
+    const neighbor = displacement.target === 'upper' ? lower : upper;
+    if (Math.abs(displacement.dZ) <= getFloorGapTolerance()) continue;
+
+    shiftBuildingZ(target, displacement.dZ);
+    target.isFixed = true;
+    const direction = displacement.dZ > 0 ? '上移' : '下移';
+    const action = displacement.target === 'upper' ? '對齊下層' : '對齊上層';
+    if (!target.fixMessages.some((m) => m.startsWith('垂直重疊修補'))) {
+      target.fixMessages.push(`垂直重疊修補：已${direction}${action} ${neighbor.floor}`);
+    }
+    fixedCount++;
+  }
+
+  return { fixedCount, skippedCount };
+}
+
+//#endregion
+
 //#region ◆垂直重疊修正 [applyVerticalOverlapRepair]
 /**
  * 垂直重疊修正
- * 針對相鄰樓層 Z 軸重疊，優先上移上層對齊下層頂部，或下移下層對齊上層底部
+ * 以建號內錨點樓層為基準規劃整棟重堆疊，僅平移已勾選異常樓層，避免逐對上移造成整棟上浮
  * @param buildings 原始建物清單
  * @param selectedRowIds 使用者勾選的 rowId 集合
  */
@@ -1412,45 +1604,48 @@ export function applyVerticalOverlapRepair(
 
   for (const group of byBuildingNo.values()) {
     const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
+    const overlapPairs = getOverlapAdjacentPairs(sorted);
+    if (overlapPairs.length === 0) continue;
 
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const lower = sorted[i]!;
-      const upper = sorted[i + 1]!;
-      const lowerBounds = getHeightBounds(lower);
-      const upperBounds = getHeightBounds(upper);
-      if (!lowerBounds || !upperBounds) continue;
+    const involvedIndices = getIndicesInvolvedInOverlap(overlapPairs);
+    const anchorIdx = pickVerticalAnchorIndex(sorted, selectedRowIds);
+    if (anchorIdx === null) continue;
 
-      const gap = upperBounds.minZ - lowerBounds.maxZ;
-      if (gap >= -getFloorGapTolerance()) continue;
+    const targets = planVerticalRestack(sorted, anchorIdx);
+    if (targets.size === 0) {
+      const fallback = applyOverlapPairFallback(sorted, overlapPairs, selectedRowIds);
+      fixedCount += fallback.fixedCount;
+      skippedCount += fallback.skippedCount;
+      continue;
+    }
 
-      const upperSelected = Boolean(
-        upper.isAbnormal && upper.rowId && selectedRowIds.has(upper.rowId),
-      );
-      const lowerSelected = Boolean(
-        lower.isAbnormal && lower.rowId && selectedRowIds.has(lower.rowId),
-      );
+    const anchorFloor = sorted[anchorIdx]!.floor;
+    for (const idx of involvedIndices) {
+      if (idx === anchorIdx) continue;
 
-      if (upperSelected) {
-        const dZ = lowerBounds.maxZ - upperBounds.minZ;
-        upper.coordinates = translateCoordinatesZ(upper.coordinates ?? [], dZ);
-        computeHeightBounds(upper);
-        upper.isFixed = true;
-        if (!upper.fixMessages.some((m) => m.startsWith('垂直重疊修補'))) {
-          upper.fixMessages.push(`垂直重疊修補：已上移對齊下層 ${lower.floor}`);
-        }
-        fixedCount++;
-      } else if (lowerSelected) {
-        const dZ = upperBounds.minZ - lowerBounds.maxZ;
-        lower.coordinates = translateCoordinatesZ(lower.coordinates ?? [], dZ);
-        computeHeightBounds(lower);
-        lower.isFixed = true;
-        if (!lower.fixMessages.some((m) => m.startsWith('垂直重疊修補'))) {
-          lower.fixMessages.push(`垂直重疊修補：已下移對齊上層 ${upper.floor}`);
-        }
-        fixedCount++;
-      } else {
+      const building = sorted[idx]!;
+      if (!isSelectedForRepair(building, selectedRowIds)) {
         skippedCount++;
+        continue;
       }
+
+      const currentBounds = getHeightBounds(building);
+      const targetBounds = targets.get(idx);
+      if (!currentBounds || !targetBounds) {
+        skippedCount++;
+        continue;
+      }
+
+      const dZ = targetBounds.minZ - currentBounds.minZ;
+      if (Math.abs(dZ) <= getFloorGapTolerance()) continue;
+
+      shiftBuildingZ(building, dZ);
+      building.isFixed = true;
+      const direction = dZ > 0 ? '上移' : '下移';
+      if (!building.fixMessages.some((m) => m.startsWith('垂直重疊修補'))) {
+        building.fixMessages.push(`垂直重疊修補：已${direction}對齊錨點樓層 ${anchorFloor}`);
+      }
+      fixedCount++;
     }
   }
 
