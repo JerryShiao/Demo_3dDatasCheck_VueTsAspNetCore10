@@ -25,14 +25,17 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             "產權建物",
             "建物產權空間",
         ];
-        private static readonly string[] XmlMidNames = ["MID", "mid"];
-        private static readonly string[] XmlOidNames = ["OID", "oid"];
-        private static readonly string[] XmlBuildingNoNames = ["建號母號", "buildingNo", "BuildingNo"];
-        private static readonly string[] XmlFloorNames = ["層次", "floor", "Floor"];
-        private static readonly string[] XmlBoundedByNames = ["boundedBy", "BoundedBy"];
+        private static readonly string[] XmlMidNames = ["MID", "mid"]; // 建物唯一識別碼
+        private static readonly string[] XmlOidNames = ["OID", "oid"]; // 建物唯一識別碼 (舊ID)
+        private static readonly string[] XmlBuildingNoNames = ["建號母號", "buildingNo", "BuildingNo"]; // 建物編號
+        private static readonly string[] XmlFloorNames = ["層次", "floor", "Floor"]; // 建物層次
+        private static readonly string[] XmlBoundedByNames = ["boundedBy", "BoundedBy"]; // 建物幾何範圍
 
+        // 服務實例
         private readonly BuildingAbnormalDetectionOptions _detection = detectionOptions.Value;
+        // XML 預處理器
         private readonly IXmlImportPreprocessor _xmlImportPreprocessor = xmlImportPreprocessor;
+        // 坐標轉換服務
         private readonly ICoordinateTransformService _coordinateTransformService = coordinateTransformService;
 
         #region ◆依內容格式自動選擇 XML 或 JSON 解析 [ProcessContent]
@@ -103,6 +106,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         }
         #endregion
 
+        #region ◆將 XML 預處理結果映射到既有狀態欄位，避免改動前端契約 [ApplyXmlPreprocessMessages]
         /// <summary>
         /// 將 XML 預處理結果映射到既有狀態欄位，避免改動前端契約
         /// </summary>
@@ -131,7 +135,14 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 }
             }
         }
+        #endregion
 
+        #region ◆將訊息加入列表，避免重複 [AddUniqueMessage]
+        /// <summary>
+        /// 將訊息加入列表，避免重複
+        /// </summary>
+        /// <param name="messages">訊息列表</param>
+        /// <param name="message">訊息</param>
         private static void AddUniqueMessage(List<string> messages, string message)
         {
             if (!messages.Contains(message))
@@ -139,6 +150,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 messages.Add(message);
             }
         }
+        #endregion
 
         #region ◆XML local-name 動態辨識輔助 [XML Helpers]
         /// <summary>
