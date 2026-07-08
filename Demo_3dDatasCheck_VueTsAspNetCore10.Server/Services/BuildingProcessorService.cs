@@ -1,6 +1,7 @@
 ﻿using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Models;
 using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Options;
 using Microsoft.Extensions.Options;
+using System.Globalization;
 using System.Text.Json;
 using System.Xml.Linq;
 
@@ -10,13 +11,29 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
     /// 建物資料處理服務
     /// </summary>
 
-    public class BuildingProcessorService(IOptions<BuildingAbnormalDetectionOptions> detectionOptions)
+    public class BuildingProcessorService(
+        IOptions<BuildingAbnormalDetectionOptions> detectionOptions,
+        IXmlImportPreprocessor xmlImportPreprocessor,
+        ICoordinateTransformService coordinateTransformService)
     {
-        // XML 命名空間（XML Namespace）的識別碼
-        private static readonly XNamespace XmlNs =
-            "http://schemas.datacontract.org/2004/07/ModelOfBuilding_WebAPI.Models";
+        // XML 候選節點與欄位別名
+        private static readonly string[] XmlBuildingElementNames =
+        [
+            "ConsistsOfBuildingPart",
+            "consistsOfBuildingPart",
+            "BuildingRegistration",
+            "產權建物",
+            "建物產權空間",
+        ];
+        private static readonly string[] XmlMidNames = ["MID", "mid"];
+        private static readonly string[] XmlOidNames = ["OID", "oid"];
+        private static readonly string[] XmlBuildingNoNames = ["建號母號", "buildingNo", "BuildingNo"];
+        private static readonly string[] XmlFloorNames = ["層次", "floor", "Floor"];
+        private static readonly string[] XmlBoundedByNames = ["boundedBy", "BoundedBy"];
 
         private readonly BuildingAbnormalDetectionOptions _detection = detectionOptions.Value;
+        private readonly IXmlImportPreprocessor _xmlImportPreprocessor = xmlImportPreprocessor;
+        private readonly ICoordinateTransformService _coordinateTransformService = coordinateTransformService;
 
         #region ◆依內容格式自動選擇 XML 或 JSON 解析 [ProcessContent]
         /// <summary>
@@ -48,31 +65,573 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// </summary>
         public List<BuildingData> ProcessXml(string xmlContent)
         {
-            // 解析 XML 字串
-            var doc = XDocument.Parse(xmlContent);
+            var preprocessResult = PreprocessXmlIfNeeded(xmlContent);
+            return ProcessXmlDocument(preprocessResult);
+        }
 
-            // 查找建物元素（支援 ConsistsOfBuildingPart 與 BuildingRegistration 兩種 XML 格式）
-            var elements = doc.Descendants(XmlNs + "ConsistsOfBuildingPart");
-            if (!elements.Any())
-            {
-                elements = doc.Descendants(XmlNs + "BuildingRegistration");
-            }
+        /// <summary>
+        /// CityGML 預處理入口；非 CityGML 直接 passthrough
+        /// </summary>
+        internal XmlImportPreprocessResult PreprocessXmlIfNeeded(string xmlContent)
+        {
+            return _xmlImportPreprocessor.Preprocess(xmlContent);
+        }
+
+        /// <summary>
+        /// 解析 XML 文件並沿用既有正規化、驗證與異常檢測流程
+        /// </summary>
+        internal List<BuildingData> ProcessXmlDocument(XmlImportPreprocessResult preprocessResult)
+        {
+            // 解析 XML 字串
+            var doc = XDocument.Parse(preprocessResult.XmlContent);
+
+            // 先依常見建物節點名搜尋，若找不到再退回欄位導向的寬鬆搜尋
+            var elements = FindCandidateElements(doc).ToList();
 
             // 將 XML 元素轉換為 BuildingData 物件列表
-            var buildings = elements.Select(el => ValidateAndFix(new BuildingData
-            {
-                Mid = el.Element(XmlNs + "MID")?.Value ?? "",               // 唯一識別符
-                Oid = el.Element(XmlNs + "OID")?.Value ?? "",               // 原始識別符
-                BuildingNo = el.Element(XmlNs + "建號母號")?.Value ?? "",   // 建號母號
-                Floor = el.Element(XmlNs + "層次")?.Value ?? "",            // 層次
-                BoundedByRaw = el.Element(XmlNs + "boundedBy")?.Value ?? "" // 原始坐標字串
-            })).ToList();
+            var buildings = elements
+                .Select((el, index) => ValidateAndFix(CreateBuildingFromXmlElement(el, index)))
+                .ToList();
+
+            ApplyXmlPreprocessMessages(buildings, preprocessResult);
 
             // 解析坐標字串並進行異常檢測
             DetectAbnormalIssues(buildings);
 
             // 返回處理後的建物資料列表
             return buildings;
+        }
+        #endregion
+
+        /// <summary>
+        /// 將 XML 預處理結果映射到既有狀態欄位，避免改動前端契約
+        /// </summary>
+        private static void ApplyXmlPreprocessMessages(
+            List<BuildingData> buildings,
+            XmlImportPreprocessResult preprocessResult)
+        {
+            if (buildings.Count == 0 || preprocessResult.Messages.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var building in buildings)
+            {
+                foreach (var message in preprocessResult.Messages)
+                {
+                    if (preprocessResult.RepairApplied)
+                    {
+                        building.IsFixed = true;
+                        AddUniqueMessage(building.FixMessages, $"CityGML 拓撲預處理：{message}");
+                    }
+                    else
+                    {
+                        AddUniqueMessage(building.FixMessages, $"CityGML 匯入提示：{message}");
+                    }
+                }
+            }
+        }
+
+        private static void AddUniqueMessage(List<string> messages, string message)
+        {
+            if (!messages.Contains(message))
+            {
+                messages.Add(message);
+            }
+        }
+
+        #region ◆XML local-name 動態辨識輔助 [XML Helpers]
+        /// <summary>
+        /// 比對 XML 節點 local-name，忽略 prefix 與大小寫差異
+        /// </summary>
+        private static bool MatchesLocalName(XName? name, params string[] candidates)
+        {
+            if (name == null)
+            {
+                return false;
+            }
+
+            return candidates.Any(candidate =>
+                string.Equals(name.LocalName, candidate, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// 查找候選建物節點；找不到已知節點名時，退回搜尋同時包含關鍵欄位的區塊
+        /// </summary>
+        private static IEnumerable<XElement> FindCandidateElements(XDocument doc)
+        {
+            var directMatches = doc
+                .Descendants()
+                .Where(el => MatchesLocalName(el.Name, XmlBuildingElementNames))
+                .Where(el => !el.Descendants().Any(child => MatchesLocalName(child.Name, XmlBuildingElementNames)))
+                .ToList();
+
+            if (directMatches.Count > 0)
+            {
+                return directMatches;
+            }
+
+            return doc
+                .Descendants()
+                .Where(HasRecognizableBuildingPayload)
+                .Where(el => !el.Elements().Any(HasRecognizableBuildingPayload))
+                .ToList();
+        }
+
+        /// <summary>
+        /// 判斷節點是否含有可辨識的建物欄位，用於 fallback 搜尋
+        /// </summary>
+        private static bool HasRecognizableBuildingPayload(XElement element)
+        {
+            var hasIdentity = HasAnyElement(element, XmlMidNames)
+                || HasAnyElement(element, XmlOidNames)
+                || HasAttribute(element, "id");
+            var hasFloorOrNo = HasAnyElement(element, XmlBuildingNoNames)
+                || HasAnyElement(element, XmlFloorNames);
+            var hasGeometry = HasAnyElement(element, XmlBoundedByNames);
+
+            return hasGeometry && (hasIdentity || hasFloorOrNo);
+        }
+
+        /// <summary>
+        /// 建立 XML 匯入後的建物資料，並先完成幾何正規化
+        /// </summary>
+        private BuildingData CreateBuildingFromXmlElement(XElement element, int index)
+        {
+            var buildingNo = GetFirstNonEmpty(element, XmlBuildingNoNames);
+            var floor = GetFirstNonEmpty(element, XmlFloorNames);
+            var xmlId = GetFirstNonEmptyAttribute(element, "id");
+            var mid = GetFirstNonEmpty(element, XmlMidNames);
+            var oid = GetFirstNonEmpty(element, XmlOidNames);
+
+            if (string.IsNullOrWhiteSpace(mid))
+            {
+                mid = !string.IsNullOrWhiteSpace(xmlId)
+                    ? xmlId
+                    : BuildFallbackIdentifier(buildingNo, floor, index, "MID");
+            }
+
+            if (string.IsNullOrWhiteSpace(oid))
+            {
+                oid = !string.IsNullOrWhiteSpace(xmlId)
+                    ? xmlId
+                    : mid;
+            }
+
+            var geometry = ExtractXmlGeometry(element);
+
+            var building = new BuildingData
+            {
+                Mid = mid,
+                Oid = oid,
+                BuildingNo = buildingNo,
+                Floor = floor,
+                BoundedByRaw = geometry.BoundedByRaw,
+                Coordinates = geometry.Coordinates,
+            };
+
+            foreach (var message in geometry.Messages)
+            {
+                building.IsFixed = true;
+                AddUniqueMessage(building.FixMessages, message);
+            }
+
+            return building;
+        }
+
+        /// <summary>
+        /// 取得欄位別名中的第一個有效值
+        /// </summary>
+        private static string GetFirstNonEmpty(XElement element, params string[] localNames)
+        {
+            foreach (var localName in localNames)
+            {
+                var value = GetElementValue(element, localName);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            return "";
+        }
+
+        /// <summary>
+        /// 取得指定 local-name 屬性的第一個有效值
+        /// </summary>
+        private static string GetFirstNonEmptyAttribute(XElement element, params string[] localNames)
+        {
+            foreach (var localName in localNames)
+            {
+                var value = GetAttributeValue(element, localName);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            return "";
+        }
+
+        /// <summary>
+        /// 先找直接子節點，必要時再找後代節點，取得指定欄位值
+        /// </summary>
+        private static string GetElementValue(XElement parent, string localName)
+        {
+            var direct = parent.Elements()
+                .FirstOrDefault(el => MatchesLocalName(el.Name, localName));
+            if (direct != null)
+            {
+                return ExtractElementText(direct);
+            }
+
+            var nested = parent.Descendants()
+                .FirstOrDefault(el => MatchesLocalName(el.Name, localName));
+            return nested == null ? "" : ExtractElementText(nested);
+        }
+
+        /// <summary>
+        /// 先找目前節點，再找後代節點上的屬性值
+        /// </summary>
+        private static string GetAttributeValue(XElement parent, string localName)
+        {
+            var self = parent.Attributes()
+                .FirstOrDefault(attr => string.Equals(attr.Name.LocalName, localName, StringComparison.OrdinalIgnoreCase));
+            if (self != null)
+            {
+                return self.Value.Trim();
+            }
+
+            var nested = parent
+                .DescendantsAndSelf()
+                .SelectMany(el => el.Attributes())
+                .FirstOrDefault(attr => string.Equals(attr.Name.LocalName, localName, StringComparison.OrdinalIgnoreCase));
+
+            return nested?.Value.Trim() ?? "";
+        }
+
+        /// <summary>
+        /// 檢查目前節點或其後代是否存在指定欄位
+        /// </summary>
+        private static bool HasAnyElement(XElement parent, params string[] localNames)
+        {
+            return parent
+                .DescendantsAndSelf()
+                .Any(el => MatchesLocalName(el.Name, localNames));
+        }
+
+        /// <summary>
+        /// 檢查目前節點或其後代是否存在指定 local-name 的屬性
+        /// </summary>
+        private static bool HasAttribute(XElement parent, params string[] localNames)
+        {
+            return parent
+                .DescendantsAndSelf()
+                .SelectMany(el => el.Attributes())
+                .Any(attr => localNames.Any(localName =>
+                    string.Equals(attr.Name.LocalName, localName, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        /// <summary>
+        /// 取出元素文字內容；若只有單一文字節點則保留原始值，否則串接內文
+        /// </summary>
+        private static string ExtractElementText(XElement element)
+        {
+            if (!element.HasElements)
+            {
+                return element.Value.Trim();
+            }
+
+            var textNode = element.Nodes().OfType<XText>().Select(text => text.Value).ToList();
+            if (textNode.Count > 0)
+            {
+                var merged = string.Concat(textNode).Trim();
+                if (!string.IsNullOrWhiteSpace(merged))
+                {
+                    return merged;
+                }
+            }
+
+            return string.Concat(element.DescendantNodes().OfType<XText>().Select(text => text.Value)).Trim();
+        }
+
+        /// <summary>
+        /// 萃取 XML 幾何並正規化為既有 coordinates 結構
+        /// </summary>
+        private XmlGeometryExtractionResult ExtractXmlGeometry(XElement element)
+        {
+            var boundedByElements = element
+                .DescendantsAndSelf()
+                .Where(el => MatchesLocalName(el.Name, XmlBoundedByNames))
+                .ToList();
+
+            if (boundedByElements.Count == 0)
+            {
+                return new XmlGeometryExtractionResult
+                {
+                    BoundedByRaw = "",
+                    Coordinates = new(),
+                };
+            }
+
+            foreach (var boundedByElement in boundedByElements)
+            {
+                var text = ExtractElementText(boundedByElement);
+                if (TryParseCoordinateJson(text, out var jsonCoordinates))
+                {
+                    return new XmlGeometryExtractionResult
+                    {
+                        BoundedByRaw = text,
+                        Coordinates = jsonCoordinates,
+                    };
+                }
+            }
+
+            var polygons = new List<List<List<double>>>();
+            var messages = new List<string>();
+            foreach (var boundedByElement in boundedByElements)
+            {
+                polygons.AddRange(ExtractPolygonsFromBoundedBy(boundedByElement, messages));
+            }
+
+            if (polygons.Count == 0)
+            {
+                return new XmlGeometryExtractionResult
+                {
+                    BoundedByRaw = ExtractElementText(boundedByElements[0]),
+                    Coordinates = new(),
+                    Messages = messages,
+                };
+            }
+
+            return new XmlGeometryExtractionResult
+            {
+                BoundedByRaw = JsonSerializer.Serialize(polygons),
+                Coordinates = polygons,
+                Messages = messages,
+            };
+        }
+
+        /// <summary>
+        /// 解析 boundedBy 內的 GML Polygon / posList
+        /// </summary>
+        private List<List<List<double>>> ExtractPolygonsFromBoundedBy(
+            XElement boundedByElement,
+            List<string> messages)
+        {
+            return boundedByElement
+                .Descendants()
+                .Where(el => MatchesLocalName(el.Name, "Polygon"))
+                .Select(polygon => ExtractPolygonCoordinates(polygon, messages))
+                .Where(polygon => polygon.Count >= 3)
+                .ToList();
+        }
+
+        /// <summary>
+        /// 解析單一 Polygon 的 exterior ring
+        /// </summary>
+        private List<List<double>> ExtractPolygonCoordinates(XElement polygonElement, List<string> messages)
+        {
+            var exterior = polygonElement
+                .Elements()
+                .FirstOrDefault(el => MatchesLocalName(el.Name, "exterior"));
+            if (exterior == null)
+            {
+                return new();
+            }
+
+            var linearRing = exterior
+                .Descendants()
+                .FirstOrDefault(el => MatchesLocalName(el.Name, "LinearRing"));
+            if (linearRing == null)
+            {
+                return new();
+            }
+
+            var posList = linearRing
+                .Elements()
+                .FirstOrDefault(el => MatchesLocalName(el.Name, "posList"));
+            if (posList != null)
+            {
+                return ParsePosList(posList, messages);
+            }
+
+            var positions = linearRing
+                .Elements()
+                .Where(el => MatchesLocalName(el.Name, "pos"))
+                .Select(pos => ParsePos(pos, messages))
+                .Where(point => point.Count >= 3)
+                .ToList();
+
+            return positions;
+        }
+
+        /// <summary>
+        /// 解析 GML posList；支援 2D/3D，2D 時自動補 z=0
+        /// </summary>
+        private List<List<double>> ParsePosList(XElement posListElement, List<string> messages)
+        {
+            var tokens = posListElement
+                .Value
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (tokens.Length < 6)
+            {
+                return new();
+            }
+
+            var values = new List<double>(tokens.Length);
+            foreach (var token in tokens)
+            {
+                if (!double.TryParse(token, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var value))
+                {
+                    return new();
+                }
+                values.Add(value);
+            }
+
+            var dimension = ResolveCoordinateDimension(posListElement, values.Count);
+            if (dimension < 2 || values.Count % dimension != 0)
+            {
+                return new();
+            }
+
+            var points = new List<List<double>>();
+            for (var i = 0; i < values.Count; i += dimension)
+            {
+                var point = new List<double> { values[i], values[i + 1] };
+                point.Add(dimension >= 3 ? values[i + 2] : 0);
+                points.Add(point);
+            }
+
+            var context = XmlCoordinateReferenceResolver.ResolveForGeometry(posListElement);
+            var normalized = _coordinateTransformService.NormalizeToWgs84(points, context);
+            foreach (var message in normalized.Messages)
+            {
+                AddUniqueMessage(messages, message);
+            }
+
+            return normalized.Points;
+        }
+
+        /// <summary>
+        /// 解析單一 GML pos 點
+        /// </summary>
+        private List<double> ParsePos(XElement posElement, List<string> messages)
+        {
+            var tokens = posElement
+                .Value
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (tokens.Length < 2)
+            {
+                return new();
+            }
+
+            var values = new List<double>();
+            foreach (var token in tokens)
+            {
+                if (!double.TryParse(token, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var value))
+                {
+                    return new();
+                }
+                values.Add(value);
+            }
+
+            while (values.Count < 3)
+            {
+                values.Add(0);
+            }
+
+            var context = XmlCoordinateReferenceResolver.ResolveForGeometry(posElement);
+            var normalized = _coordinateTransformService.NormalizeToWgs84([values.Take(3).ToList()], context);
+            foreach (var message in normalized.Messages)
+            {
+                AddUniqueMessage(messages, message);
+            }
+
+            return normalized.Points.FirstOrDefault() ?? [];
+        }
+
+        /// <summary>
+        /// 判斷座標維度，優先使用 srsDimension / dimension，其次依數量推論
+        /// </summary>
+        private static int ResolveCoordinateDimension(XElement posListElement, int valueCount)
+        {
+            var dimensionText = posListElement.Attributes()
+                .FirstOrDefault(attr =>
+                    string.Equals(attr.Name.LocalName, "srsDimension", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(attr.Name.LocalName, "dimension", StringComparison.OrdinalIgnoreCase))
+                ?.Value;
+
+            if (int.TryParse(dimensionText, out var parsedDimension) && parsedDimension >= 2)
+            {
+                return parsedDimension;
+            }
+
+            if (valueCount % 3 == 0)
+            {
+                return 3;
+            }
+
+            if (valueCount % 2 == 0)
+            {
+                return 2;
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// 產生識別欄位 fallback 值
+        /// </summary>
+        private static string BuildFallbackIdentifier(string buildingNo, string floor, int index, string prefix)
+        {
+            if (!string.IsNullOrWhiteSpace(buildingNo) && !string.IsNullOrWhiteSpace(floor))
+            {
+                return $"{prefix}_{buildingNo}_{floor}";
+            }
+
+            return $"{prefix}_XML_{index + 1:0000}";
+        }
+
+        /// <summary>
+        /// 嘗試將舊格式 JSON 座標字串轉成 3D polygon 清單
+        /// </summary>
+        private static bool TryParseCoordinateJson(
+            string raw,
+            out List<List<List<double>>> coordinates)
+        {
+            coordinates = new();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<List<List<List<double>>>>(raw);
+                if (parsed == null || parsed.Count == 0)
+                {
+                    return false;
+                }
+
+                coordinates = parsed;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private sealed class XmlGeometryExtractionResult
+        {
+            public string BoundedByRaw { get; init; } = string.Empty;
+
+            public List<List<List<double>>> Coordinates { get; init; } = new();
+
+            public List<string> Messages { get; init; } = [];
         }
         #endregion
 
@@ -244,8 +803,8 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// </summary>
         /// <param name="lowerFloor">前一層建物</param>
         /// <param name="upperFloor">當前層建物</param>
-        /// <param name="lowerFloorNo">前一層樓層號碼</param>
-        /// <param name="upperFloorNo">當前層樓層號碼</param>
+        /// <param name="lowerFloorLabel">前一層樓層標籤</param>
+        /// <param name="upperFloorLabel">當前層樓層標籤</param>
         private void CompareAdjacentFloors(
             BuildingData lowerFloor,
             BuildingData upperFloor,
@@ -297,10 +856,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             dto.IsAbnormal = true; // 標記為異常
             dto.IsValid = false;   // 標記為無效
             // 將異常訊息加入到錯誤訊息列表中
-            if (!dto.ErrorMessages.Contains(message))
-            {
-                dto.ErrorMessages.Add(message);
-            }               
+            AddUniqueMessage(dto.ErrorMessages, message);
         }
         #endregion
 
@@ -387,103 +943,105 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             if (string.IsNullOrWhiteSpace(dto.BuildingNo))
             {
                 dto.IsValid = false;
-                dto.ErrorMessages.Add("建號缺漏");
+                AddUniqueMessage(dto.ErrorMessages, "建號缺漏");
                 dto.BuildingNo = "UNKNOWN_NO";
                 dto.IsFixed = true;
-                dto.FixMessages.Add("已自動預設建號為 UNKNOWN_NO");
+                AddUniqueMessage(dto.FixMessages, "已自動預設建號為 UNKNOWN_NO");
             }
 
             // 樓層缺漏修復
             if (string.IsNullOrWhiteSpace(dto.Floor))
             {
                 dto.IsValid = false;
-                dto.ErrorMessages.Add("層次缺漏");
+                AddUniqueMessage(dto.ErrorMessages, "層次缺漏");
                 dto.Floor = "001";
                 dto.IsFixed = true;
-                dto.FixMessages.Add("已自動預設層次為 001 樓");
+                AddUniqueMessage(dto.FixMessages, "已自動預設層次為 001 樓");
             }
 
             // 樓層高度缺漏修復
             if (string.IsNullOrWhiteSpace(dto.BoundedByRaw))
             {
-                dto.IsValid = false;
-                dto.ErrorMessages.Add("座標完全缺漏，無法進行 3D 繪製");
-                return dto;
-            }
-
-            try
-            {
-                // 解析座標資料
-                var rawCoords = JsonSerializer.Deserialize<List<List<List<double>>>>(dto.BoundedByRaw);
-                if (rawCoords != null && rawCoords.Count > 0)
+                if (dto.Coordinates.Count == 0)
                 {
-                    var hadInvalidEntries = rawCoords.Any(p =>
-                        p == null || p.Any(pt => pt == null || pt.Count < 3));
-                    var sanitized = SanitizeCoordinates(rawCoords);
-                    if (sanitized.Count == 0)
-                    {
-                        dto.IsValid = false;
-                        dto.ErrorMessages.Add("座標資料無效（僅含空值或點數不足）");
-                        dto.Coordinates = new();
-                        return dto;
-                    }
-                    if (hadInvalidEntries)
-                    {
-                        dto.IsValid = false;
-                        dto.ErrorMessages.Add("座標含空值或無效點，已過濾無效幾何");
-                    }
-
-                    dto.Coordinates = sanitized; // 設定已過濾的座標資料
-                    ComputeHeightBounds(dto);    // 計算高度邊界
-
-                    // 逐一檢測3D網格座標
-                    foreach (var polygon in dto.Coordinates)
-                    {
-                        // 若座標點數不足3個，則無法形成多邊形，跳過不檢測
-                        if (polygon.Count == 0)
-                        {
-                            continue;
-                        }
-                        // 若座標為空，則無法形成多邊形，跳過不檢測
-                        bool isValidPolygon = true;
-                        foreach (var pt in polygon)
-                        {
-                            if (pt == null || pt.Count < 3)
-                            {
-                                isValidPolygon = false;
-                                break;
-                            }
-                        }
-                        if (!isValidPolygon)
-                        {
-                            continue;
-                        }
-
-                        // 第1個點的座標
-                        var firstPoint = polygon[0];
-
-                        // 最後1個點的座標
-                        var lastPoint = polygon[^1];
-
-                        // 若第1個點與最後1個點的座標差異過大，表示座標未封閉，則進行修復
-                        if (Math.Abs(firstPoint[0] - lastPoint[0]) > 0.000001 ||
-                            Math.Abs(firstPoint[1] - lastPoint[1]) > 0.000001)
-                        {
-                            dto.IsValid = false; // 標記為無效
-                            dto.ErrorMessages.Add("座標未閉合（幾何邊界破面異常）"); // 錯誤訊息
-                            polygon.Add(new List<double> { firstPoint[0], firstPoint[1], firstPoint[2] }); // 將第1個點的座標加入到最後，形成閉合多邊形
-                            dto.IsFixed = true; // 標記為已修復
-                            dto.FixMessages.Add("幾何修復：已自動追加閉合端點"); // 修復訊息
-                        }
-                    }
-                    ComputeHeightBounds(dto); // 再次計算高度邊界，因為可能已經修復了座標
+                    dto.IsValid = false;
+                    AddUniqueMessage(dto.ErrorMessages, "座標完全缺漏，無法進行 3D 繪製");
+                    return dto;
                 }
             }
-            catch
+
+            if (dto.Coordinates.Count == 0)
+            {
+                if (!TryParseCoordinateJson(dto.BoundedByRaw, out var rawCoords))
+                {
+                    dto.IsValid = false;
+                    AddUniqueMessage(dto.ErrorMessages, "座標 JSON 格式解析失敗");
+                    return dto;
+                }
+
+                dto.Coordinates = rawCoords;
+            }
+
+            var hadInvalidEntries = dto.Coordinates.Any(p =>
+                p == null || p.Any(pt => pt == null || pt.Count < 3));
+            var sanitized = SanitizeCoordinates(dto.Coordinates);
+            if (sanitized.Count == 0)
             {
                 dto.IsValid = false;
-                dto.ErrorMessages.Add("座標 JSON 格式解析失敗");
+                AddUniqueMessage(dto.ErrorMessages, "座標資料無效（僅含空值或點數不足）");
+                dto.Coordinates = new();
+                return dto;
             }
+            if (hadInvalidEntries)
+            {
+                dto.IsValid = false;
+                AddUniqueMessage(dto.ErrorMessages, "座標含空值或無效點，已過濾無效幾何");
+            }
+
+            dto.Coordinates = sanitized; // 設定已過濾的座標資料
+            ComputeHeightBounds(dto);    // 計算高度邊界
+
+            // 逐一檢測3D網格座標
+            foreach (var polygon in dto.Coordinates)
+            {
+                // 若座標點數不足3個，則無法形成多邊形，跳過不檢測
+                if (polygon.Count == 0)
+                {
+                    continue;
+                }
+                // 若座標為空，則無法形成多邊形，跳過不檢測
+                bool isValidPolygon = true;
+                foreach (var pt in polygon)
+                {
+                    if (pt == null || pt.Count < 3)
+                    {
+                        isValidPolygon = false;
+                        break;
+                    }
+                }
+                if (!isValidPolygon)
+                {
+                    continue;
+                }
+
+                // 第1個點的座標
+                var firstPoint = polygon[0];
+
+                // 最後1個點的座標
+                var lastPoint = polygon[^1];
+
+                // 若第1個點與最後1個點的座標差異過大，表示座標未封閉，則進行修復
+                if (Math.Abs(firstPoint[0] - lastPoint[0]) > 0.000001 ||
+                    Math.Abs(firstPoint[1] - lastPoint[1]) > 0.000001)
+                {
+                    dto.IsValid = false; // 標記為無效
+                    AddUniqueMessage(dto.ErrorMessages, "座標未閉合（幾何邊界破面異常）"); // 錯誤訊息
+                    polygon.Add(new List<double> { firstPoint[0], firstPoint[1], firstPoint[2] }); // 將第1個點的座標加入到最後，形成閉合多邊形
+                    dto.IsFixed = true; // 標記為已修復
+                    AddUniqueMessage(dto.FixMessages, "幾何修復：已自動追加閉合端點"); // 修復訊息
+                }
+            }
+            ComputeHeightBounds(dto); // 再次計算高度邊界，因為可能已經修復了座標
             return dto;
         }
         #endregion

@@ -1,0 +1,1 @@
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\demo_3ddatascheck_vuetsaspnetcore10.client.esproj.CoreCompileInputs.cache

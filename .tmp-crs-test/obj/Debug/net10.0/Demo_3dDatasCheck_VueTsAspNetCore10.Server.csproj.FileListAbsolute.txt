@@ -1,0 +1,9 @@
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj.AssemblyReference.cache
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\net10.0\rpswa.dswa.cache.json
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.GeneratedMSBuildEditorConfig.editorconfig
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.AssemblyInfoInputs.cache
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.AssemblyInfo.cs
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.csproj.CoreCompileInputs.cache
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.MvcApplicationPartsAssemblyInfo.cs
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.MvcApplicationPartsAssemblyInfo.cache
+d:\GitHub\Demo_3dDatasCheck_VueTsAspNetCore10\.tmp-crs-test\obj\Debug\net10.0\Demo_3dDatasCheck_VueTsAspNetCore10.Server.sourcelink.json

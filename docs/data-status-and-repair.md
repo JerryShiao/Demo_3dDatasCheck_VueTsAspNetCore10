@@ -27,6 +27,45 @@
 
 其中前端型別定義位於 `demo_3ddatascheck_vuetsaspnetcore10.client/src/types/BuildingPart.ts`。
 
+### 1.1 匯入格式與幾何正規化
+`BuildingProcessorService.ProcessContent()` 目前會先依內容前綴自動分流：
+
+- `[` / `{`：JSON
+- `<`：XML
+
+其中 JSON 與 XML 在進入後續驗證前，都會先被正規化成相同的 `coordinates: number[][][]` 結構，再交由 `ValidateAndFix()` 與 `DetectAbnormalIssues()` 共用。
+
+需特別注意：前端 Cesium、地形檢測與修復工具都假設 `coordinates` 的每個點都是 **`[lon, lat, z]`（WGS84 經緯度 + 高程）**。因此 XML/GML 若原始提供的是平面投影座標（例如台灣常見的 TWD97 / TM2），後端會在 XML 正規化階段先轉成 WGS84，再交給後續流程。
+
+自 CityGML 預處理重構後，XML 路徑會先經過一層「是否需要 CityDoctor2」的前置判斷：
+
+1. 解析為 XML 後，先判斷是否為 CityGML 文件
+2. 若不是 CityGML，沿用既有寬鬆 XML 匯入流程
+3. 若是 CityGML 且偵測到 `lodXSolid` / `lodXMultiSurface` / `gml:Polygon` 等拓撲相關幾何節點，則先嘗試以 CityDoctor2 進行拓撲預處理
+4. 預處理成功時，使用修復後的 XML 進入既有正規化流程
+5. 預處理停用、失敗、逾時或未產出結果時，回退使用原始 XML，仍繼續既有匯入流程
+
+也就是說，CityDoctor2 目前是 **CityGML 專用且可選的前置處理**，不會改變 JSON、GeoJSON、舊版 XML、地政 XML 的主流程。
+
+目前後端支援的匯入來源如下：
+
+| 來源格式 | 幾何來源 | 正規化方式 |
+| --- | --- | --- |
+| 舊版 JSON 陣列 | `boundedBy` JSON 字串 | 直接反序列化為 `List<List<List<double>>>` |
+| GeoJSON FeatureCollection | `geometry.coordinates` | 由 `GeoJsonSolidInflator` 轉成既有 3D polygon 陣列；必要時自動補成立體 |
+| 舊版 XML | `<boundedBy>` 內的 JSON 字串 | 與舊版 JSON 相同，直接反序列化 |
+| CityGML / 地政 XML | `gml:Polygon` / `gml:posList` / `gml:pos` | 逐一讀取點列，必要時依 CRS 轉換為 `[lon, lat, z]` polygon 陣列 |
+
+CityGML / 地政 XML 路徑另外有以下相容規則：
+
+- XML 節點比對以 `local-name` 為準，忽略 namespace prefix 與大小寫差異。
+- 會辨識 `ConsistsOfBuildingPart`、`BuildingRegistration`、`產權建物`、`建物產權空間` 等常見建物節點。
+- `MID` / `OID` 缺漏時，會優先使用 `gml:id`；若仍無法取得，才會用 `建號母號 + 層次` 或流水號組出 fallback 識別值。
+- `gml:posList` 若是 2D 座標，後端會自動補 `z = 0`，讓後續流程仍可沿用既有 3D 幾何處理。
+- `srsName` 會優先從 `posList` / `pos`、`LinearRing`、`Polygon`、`MultiSurface`、`boundedBy` 與祖先節點中查找。
+- 若 XML 未提供 `srsName`，後端會先判斷是否已落在經緯度範圍；若數值明顯像台灣 TM2 平面座標，則會以啟發式推定為 `TWD97 / TM2 zone 121 (EPSG:3826)` 並自動轉成 WGS84。
+- 若偵測到目前未支援的 CRS，會保留原始座標並附上匯入提示，方便後續人工確認。
+
 ## 2. 資料狀態判斷邏輯
 
 ### 2.1 狀態來源
@@ -106,7 +145,7 @@
 常見情況如下：
 
 - `BoundedByRaw` 完全缺漏
-- 座標 JSON 解析失敗
+- 座標 JSON 解析失敗（舊版 `boundedBy` 文字格式）
 - 座標資料只含空值或點數不足
 - 座標中含有無效點，過濾後仍留下資料瑕疵
 
@@ -139,7 +178,14 @@
 flowchart TD
     appStart[前端頁面載入] --> loadConfig[loadBuildingDetectionConfig]
     loadConfig --> importData[匯入資料]
-    importData --> backendParse[後端解析與 ValidateAndFix]
+    importData --> importRoute{格式判斷}
+    importRoute -->|JSON/GeoJSON| backendParse[後端解析與 ValidateAndFix]
+    importRoute -->|XML| xmlPreprocess{是否為需預處理的CityGML}
+    xmlPreprocess -->|否| xmlCrs[XML CRS 偵測與座標正規化]
+    xmlPreprocess -->|是| cityDoctor[CityDoctor2預處理]
+    cityDoctor --> repairedXml[修復後或原始XML]
+    repairedXml --> xmlCrs
+    xmlCrs --> backendParse
     backendParse --> backendDetect[後端 DetectAbnormalIssues]
     backendDetect --> clientLoad[前端 loadDataToMap]
     clientLoad --> terrainDetect[前端 detectTerrainAbnormal]
@@ -163,6 +209,8 @@ flowchart TD
 
 ### 4.1 修復入口與執行位置
 目前修復流程主要在前端執行，沒有獨立的後端修復 API。
+
+需注意：CityDoctor2 的 CityGML 拓撲預處理雖然發生在後端匯入前段，但其定位是 **匯入前幾何清理**，不是取代既有前端互動修復。匯入完成後，仍沿用原本的垂直異常檢測、地形複檢與互動畫面修復。
 
 執行路徑如下：
 
@@ -413,13 +461,25 @@ flowchart TD
 畫面顯示的「異常」與程式欄位 `isAbnormal` 已一致；`errorMessages` 中的具體描述（如「疑似浮空」）則保留各異常類型的細節說明。
 
 ### 8.2 修復主要在前端
-目前互動式修復流程完全在前端完成，後端負責的修復僅限於匯入階段的基本清理與自動補值。
+目前互動式修復流程完全在前端完成，後端負責的修復僅限於匯入階段的基本清理、自動補值，以及 CityGML 專用的可選 CityDoctor2 拓撲預處理。
 
-### 8.3 `已修復` 不一定代表完全無問題
+### 8.3 XML CRS 正規化的狀態影響
+
+- 若 XML/GML 明確宣告 `srsName`，後端會依該 CRS 將幾何正規化為 WGS84 `lon/lat/z`
+- 若未宣告 `srsName`，但數值範圍顯示為台灣常見 TM2 投影座標，後端會自動轉換，並在 `fixMessages` 加上座標系統推定訊息
+- 若 CRS 不受支援，後端會保留原始座標並附加匯入提示；此情況可能導致前端上圖異常，需人工確認來源資料
+
+### 8.4 CityDoctor2 前置處理的狀態影響
+
+- 若 CityDoctor2 成功修復並輸出新 XML，後端會在各筆資料的 `fixMessages` 補上 `CityGML 拓撲預處理` 訊息，並標記 `isFixed = true`
+- 若 CityDoctor2 被停用、設定不完整、逾時或失敗，會回退至原始 XML 繼續匯入；此類訊息僅作為匯入提示，不會直接把資料標記為 `異常`
+- 後續是否顯示為 `異常`，仍由 `ValidateAndFix()`、`DetectAbnormalIssues()` 與前端 `detectTerrainAbnormal()` 決定
+
+### 8.5 `已修復` 不一定代表完全無問題
 只要 `isFixed = true` 且 `isAbnormal = false`，畫面就會顯示為 `已修復`。若資料曾經被自動補值或幾何補強，即使原先存在錯誤，也可能直接歸類為 `已修復`。
 
-### 8.4 修復後仍可能回到異常
+### 8.6 修復後仍可能回到異常
 修復完成後會再次進行地形異常檢測（`detectTerrainAbnormal`），因此原本已修復的資料仍可能因地形落差被重新標記為 `異常`。
 
-### 8.5 修復清單不包含純錯誤資料
+### 8.7 修復清單不包含純錯誤資料
 `DataRepairDialog.vue` 只列出 `isAbnormal` 資料，因此僅有 `錯誤` 而非 `異常` 的資料，無法透過目前的資料修復對話框處理。
