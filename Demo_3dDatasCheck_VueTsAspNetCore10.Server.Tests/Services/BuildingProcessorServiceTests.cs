@@ -38,6 +38,80 @@ public class BuildingProcessorServiceTests
     }
 
     [Fact]
+    public void ProcessXml_LegacyJsonBoundedBy_WithTaiwanTm2Coordinates_TransformsToWgs84()
+    {
+        var service = CreateService();
+        var xml = """
+            <ArrayOfConsistsOfBuildingPart>
+              <ConsistsOfBuildingPart>
+                <MID>1001</MID>
+                <OID>2002</OID>
+                <建號母號>A001</建號母號>
+                <層次>001</層次>
+                <boundedBy>[[[251582.6776065464,2742712.2278096904,0],[251587.1797726064,2742721.7136149006,0],[251582.66272250641,2742723.8575035008,0],[251578.1605564464,2742714.3716982906,0],[251582.6776065464,2742712.2278096904,0]]]</boundedBy>
+              </ConsistsOfBuildingPart>
+            </ArrayOfConsistsOfBuildingPart>
+            """;
+
+        var result = service.ProcessXml(xml);
+
+        var building = Assert.Single(result);
+        Assert.All(building.Coordinates.SelectMany(polygon => polygon), point =>
+        {
+            Assert.InRange(point[0], 119d, 123d);
+            Assert.InRange(point[1], 21d, 26d);
+        });
+        Assert.Contains(building.FixMessages, message => message.Contains("舊版 boundedBy JSON"));
+    }
+
+    [Fact]
+    public void ProcessXml_LegacyJsonBoundedBy_WithNegativeLatitude_AddsCoordinateWarning()
+    {
+        var service = CreateService();
+        var xml = """
+            <ArrayOfConsistsOfBuildingPart>
+              <ConsistsOfBuildingPart>
+                <MID>1</MID>
+                <OID>1</OID>
+                <建號母號>00092</建號母號>
+                <層次>001</層次>
+                <boundedBy>[[[118.74714,-1.4347105,0],[118.7471392,-1.4347097,0],[118.7470989,-1.4347498,0],[118.74714,-1.4347105,0]]]</boundedBy>
+              </ConsistsOfBuildingPart>
+            </ArrayOfConsistsOfBuildingPart>
+            """;
+
+        var result = service.ProcessXml(xml);
+
+        var building = Assert.Single(result);
+        Assert.True(building.IsAbnormal);
+        Assert.Contains(building.ErrorMessages, message => message.Contains("緯度為負值"));
+        Assert.InRange(building.Coordinates[0][0][1], -2d, -1d);
+    }
+
+    [Fact]
+    public void ProcessJson_LegacyArray_WithNegativeLatitude_AddsCoordinateWarning()
+    {
+        var service = CreateService();
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "00092",
+                "層次": "001",
+                "boundedBy": "[[[118.74714,-1.4347105,0],[118.7471392,-1.4347097,0],[118.7470989,-1.4347498,0],[118.74714,-1.4347105,0]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        var building = Assert.Single(result);
+        Assert.True(building.IsAbnormal);
+        Assert.Contains(building.ErrorMessages, message => message.Contains("緯度為負值"));
+    }
+
+    [Fact]
     public void ProcessXml_CityGmlPropertyBuilding_UsesGmlIdAndParsesPolygons()
     {
         var service = CreateService();

@@ -14,6 +14,12 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         private const string Epsg3825 = "EPSG:3825"; // TWD97 / TM2 zone 119
         private const string Crs84 = "CRS:84"; // lon/lat 軸序的 WGS84
 
+        // 台灣本島與離島常見 WGS84 經緯度範圍（含金門、馬祖）
+        private const double TaiwanLonMin = 118.0;
+        private const double TaiwanLonMax = 124.0;
+        private const double TaiwanLatMin = 21.5;
+        private const double TaiwanLatMax = 26.5;
+
         // 轉換器快取，避免重複建立相同 CRS → WGS84 轉換
         private readonly Dictionary<string, ICoordinateTransformation> _transformCache = new(StringComparer.OrdinalIgnoreCase);
         // ProjNET 轉換工廠
@@ -146,6 +152,56 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         }
         #endregion
 
+        #region ◆舊版 boundedBy JSON 座標正規化 [NormalizeLegacyBoundedByPolygons]
+        /// <summary>
+        /// 舊版 boundedBy JSON 座標正規化：啟發式 TWD97 轉換與台灣經緯度合理性檢查
+        /// </summary>
+        public LegacyBoundedByNormalizationResult NormalizeLegacyBoundedByPolygons(
+            IReadOnlyList<List<List<double>>> polygons)
+        {
+            var orderedPoints = CollectOrderedValidPoints(polygons);
+            if (orderedPoints.Count == 0)
+            {
+                return new LegacyBoundedByNormalizationResult
+                {
+                    Polygons = ClonePolygons(polygons),
+                };
+            }
+
+            var samplePoints = orderedPoints.Select(entry => entry.Point).ToList();
+            var fixMessages = new List<string>();
+            var errorMessages = new List<string>();
+
+            if (!LooksLikeGeographic(samplePoints) && LooksLikeTaiwanTm2(samplePoints))
+            {
+                var normalized = NormalizeToWgs84(samplePoints, new CoordinateReferenceContext());
+                fixMessages.AddRange(normalized.Messages);
+                if (normalized.WasTransformed)
+                {
+                    fixMessages.Add("舊版 boundedBy JSON：已依台灣 TM2 投影座標特徵自動轉為 WGS84。");
+                }
+
+                var transformedPolygons = RebuildPolygons(polygons, orderedPoints, normalized.Points);
+                AppendTaiwanGeographicWarnings(CollectOrderedValidPoints(transformedPolygons), errorMessages);
+
+                return new LegacyBoundedByNormalizationResult
+                {
+                    Polygons = transformedPolygons,
+                    WasTransformed = normalized.WasTransformed,
+                    FixMessages = fixMessages,
+                    ErrorMessages = errorMessages,
+                };
+            }
+
+            AppendTaiwanGeographicWarnings(orderedPoints, errorMessages);
+            return new LegacyBoundedByNormalizationResult
+            {
+                Polygons = ClonePolygons(polygons),
+                ErrorMessages = errorMessages,
+            };
+        }
+        #endregion
+
         #region ◆僅正規化軸序為 lon/lat [NormalizeAxisOnly]
         /// <summary>
         /// 僅依軸序將座標正規化為 lon/lat/z，不做投影轉換
@@ -208,6 +264,137 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 && point[0] is >= 100000 and <= 400000
                 && point[1] is >= 2400000 and <= 3200000);
         }
+        #endregion
+
+        #region ◆舊版 boundedBy 輔助方法 [LegacyBoundedByHelpers]
+        /// <summary>
+        /// 依多邊形順序收集有效座標點
+        /// </summary>
+        private static List<PointEntry> CollectOrderedValidPoints(IReadOnlyList<List<List<double>>> polygons)
+        {
+            var entries = new List<PointEntry>();
+            for (var polygonIndex = 0; polygonIndex < polygons.Count; polygonIndex++)
+            {
+                var polygon = polygons[polygonIndex];
+                if (polygon == null)
+                {
+                    continue;
+                }
+
+                for (var pointIndex = 0; pointIndex < polygon.Count; pointIndex++)
+                {
+                    var point = polygon[pointIndex];
+                    if (point == null || point.Count < 2)
+                    {
+                        continue;
+                    }
+
+                    entries.Add(new PointEntry(polygonIndex, pointIndex, point));
+                }
+            }
+
+            return entries;
+        }
+
+        /// <summary>
+        /// 檢查台灣經緯度合理性並附加提示訊息
+        /// </summary>
+        private static void AppendTaiwanGeographicWarnings(
+            IReadOnlyList<PointEntry> points,
+            List<string> errorMessages)
+        {
+            if (points.Count == 0)
+            {
+                return;
+            }
+
+            var hasTaiwanLongitude = false;
+            var hasNegativeLatitude = false;
+            var hasOutOfRangeLatitude = false;
+
+            foreach (var entry in points)
+            {
+                var lon = entry.Point[0];
+                var lat = entry.Point[1];
+                if (!IsTaiwanLongitude(lon))
+                {
+                    continue;
+                }
+
+                hasTaiwanLongitude = true;
+                if (lat < 0)
+                {
+                    hasNegativeLatitude = true;
+                }
+                else if (lat < TaiwanLatMin || lat > TaiwanLatMax)
+                {
+                    hasOutOfRangeLatitude = true;
+                }
+            }
+
+            if (!hasTaiwanLongitude)
+            {
+                return;
+            }
+
+            if (hasNegativeLatitude)
+            {
+                errorMessages.Add("座標異常：經度落在台灣範圍，但緯度為負值，建物可能顯示於海上；請確認來源資料的緯度是否正確。");
+                return;
+            }
+
+            if (hasOutOfRangeLatitude)
+            {
+                errorMessages.Add("座標異常：經度落在台灣範圍，但緯度超出台灣合理範圍（約 21.5°N~26.5°N）；請確認來源座標。");
+            }
+        }
+
+        /// <summary>
+        /// 判斷經度是否落在台灣常見範圍
+        /// </summary>
+        private static bool IsTaiwanLongitude(double lon)
+        {
+            return lon >= TaiwanLonMin && lon <= TaiwanLonMax;
+        }
+
+        /// <summary>
+        /// 將正規化後的平面點位回填至多邊形結構
+        /// </summary>
+        private static List<List<List<double>>> RebuildPolygons(
+            IReadOnlyList<List<List<double>>> sourcePolygons,
+            IReadOnlyList<PointEntry> orderedPoints,
+            IReadOnlyList<List<double>> normalizedPoints)
+        {
+            var rebuilt = ClonePolygons(sourcePolygons);
+            var count = Math.Min(orderedPoints.Count, normalizedPoints.Count);
+            for (var i = 0; i < count; i++)
+            {
+                var entry = orderedPoints[i];
+                rebuilt[entry.PolygonIndex][entry.PointIndex] = normalizedPoints[i];
+            }
+
+            return rebuilt;
+        }
+
+        /// <summary>
+        /// 深拷貝多邊形座標
+        /// </summary>
+        private static List<List<List<double>>> ClonePolygons(IReadOnlyList<List<List<double>>> polygons)
+        {
+            return polygons
+                .Select(polygon =>
+                    polygon == null
+                        ? new List<List<double>>()
+                        : polygon
+                            .Select(point =>
+                                point == null
+                                    ? new List<double>()
+                                    : new List<double>(point))
+                            .ToList())
+                .ToList();
+        }
+
+        private sealed record PointEntry(int PolygonIndex, int PointIndex, List<double> Point);
         #endregion
 
         #region ◆取得或建立 CRS → WGS84 轉換器 [TryGetTransformation]

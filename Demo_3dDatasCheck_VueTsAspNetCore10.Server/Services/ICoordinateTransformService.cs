@@ -74,6 +74,32 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
     }
 
     /// <summary>
+    /// 舊版 boundedBy JSON 座標正規化結果
+    /// </summary>
+    public sealed class LegacyBoundedByNormalizationResult
+    {
+        /// <summary>
+        /// 正規化後的多邊形座標（lon, lat, z）
+        /// </summary>
+        public required List<List<List<double>>> Polygons { get; init; }
+
+        /// <summary>
+        /// 是否實際進行投影轉換
+        /// </summary>
+        public bool WasTransformed { get; init; }
+
+        /// <summary>
+        /// 自動修復／轉換提示訊息
+        /// </summary>
+        public List<string> FixMessages { get; init; } = [];
+
+        /// <summary>
+        /// 座標異常提示訊息
+        /// </summary>
+        public List<string> ErrorMessages { get; init; } = [];
+    }
+
+    /// <summary>
     /// 座標轉換服務介面：將 XML/GML 幾何座標正規化為 WGS84 lon/lat/z
     /// </summary>
     public interface ICoordinateTransformService
@@ -87,5 +113,13 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         CoordinateNormalizationResult NormalizeToWgs84(
             IReadOnlyList<List<double>> rawPoints,
             CoordinateReferenceContext context);
+
+        /// <summary>
+        /// 舊版 boundedBy JSON 座標正規化：啟發式 TWD97 轉換與台灣經緯度合理性檢查
+        /// </summary>
+        /// <param name="polygons">原始多邊形座標</param>
+        /// <returns>正規化結果</returns>
+        LegacyBoundedByNormalizationResult NormalizeLegacyBoundedByPolygons(
+            IReadOnlyList<List<List<double>>> polygons);
     }
 }

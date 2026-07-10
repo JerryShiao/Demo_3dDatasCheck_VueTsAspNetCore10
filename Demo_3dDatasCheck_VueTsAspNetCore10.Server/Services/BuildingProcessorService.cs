@@ -690,7 +690,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// <summary>
         /// 解析 GeoJSON FeatureCollection 的 features 陣列
         /// </summary>
-        private static List<BuildingData> ProcessGeoJsonFeatures(JsonElement features)
+        private List<BuildingData> ProcessGeoJsonFeatures(JsonElement features)
         {
             var drafts = GeoJsonSolidInflator.ProcessFeatures(features);
             var buildings = drafts
@@ -949,7 +949,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// </summary>
         /// <param name="dto">建物資料</param>
         /// <returns></returns>
-        private static BuildingData ValidateAndFix(BuildingData dto)
+        private BuildingData ValidateAndFix(BuildingData dto)
         {
             // 建號缺漏修復
             if (string.IsNullOrWhiteSpace(dto.BuildingNo))
@@ -992,6 +992,11 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 }
 
                 dto.Coordinates = rawCoords;
+            }
+
+            if (dto.Coordinates.Count > 0)
+            {
+                ApplyLegacyCoordinateNormalization(dto);
             }
 
             var hadInvalidEntries = dto.Coordinates.Any(p =>
@@ -1055,6 +1060,33 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             }
             ComputeHeightBounds(dto); // 再次計算高度邊界，因為可能已經修復了座標
             return dto;
+        }
+
+        /// <summary>
+        /// 舊版 boundedBy JSON 座標正規化：TWD97 啟發式轉換與台灣經緯度合理性檢查
+        /// </summary>
+        private void ApplyLegacyCoordinateNormalization(BuildingData dto)
+        {
+            var result = _coordinateTransformService.NormalizeLegacyBoundedByPolygons(dto.Coordinates);
+            dto.Coordinates = result.Polygons;
+
+            if (result.WasTransformed)
+            {
+                dto.IsFixed = true;
+            }
+
+            foreach (var message in result.FixMessages)
+            {
+                dto.IsFixed = true;
+                AddUniqueMessage(dto.FixMessages, message);
+            }
+
+            foreach (var message in result.ErrorMessages)
+            {
+                dto.IsValid = false;
+                dto.IsAbnormal = true;
+                AddUniqueMessage(dto.ErrorMessages, message);
+            }
         }
         #endregion
 
