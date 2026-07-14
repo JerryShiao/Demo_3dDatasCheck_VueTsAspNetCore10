@@ -24,12 +24,20 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
             "BuildingRegistration",
             "產權建物",
             "建物產權空間",
+            "BuildingFloor",
         ];
         private static readonly string[] XmlMidNames = ["MID", "mid"]; // 建物唯一識別碼
         private static readonly string[] XmlOidNames = ["OID", "oid"]; // 建物唯一識別碼 (舊ID)
         private static readonly string[] XmlBuildingNoNames = ["建號母號", "buildingNo", "BuildingNo"]; // 建物編號
         private static readonly string[] XmlFloorNames = ["層次", "floor", "Floor"]; // 建物層次
         private static readonly string[] XmlBoundedByNames = ["boundedBy", "BoundedBy"]; // 建物幾何範圍
+        // BuildingFloor 表面幾何（JSON 多邊形陣列）；順序影響合併結果
+        private static readonly string[] XmlSurfaceNames =
+        [
+            "WallSurface",
+            "FloorSurface",
+            "CeilingSurface",
+        ];
 
         // 服務實例
         private readonly BuildingAbnormalDetectionOptions _detection = detectionOptions.Value;
@@ -200,7 +208,8 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 || HasAttribute(element, "id");
             var hasFloorOrNo = HasAnyElement(element, XmlBuildingNoNames)
                 || HasAnyElement(element, XmlFloorNames);
-            var hasGeometry = HasAnyElement(element, XmlBoundedByNames);
+            var hasGeometry = HasAnyElement(element, XmlBoundedByNames)
+                || HasAnyElement(element, XmlSurfaceNames);
 
             return hasGeometry && (hasIdentity || hasFloorOrNo);
         }
@@ -379,11 +388,8 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
 
             if (boundedByElements.Count == 0)
             {
-                return new XmlGeometryExtractionResult
-                {
-                    BoundedByRaw = "",
-                    Coordinates = new(),
-                };
+                // BuildingFloor：WallSurface / FloorSurface / CeilingSurface JSON
+                return ExtractSurfaceGeometry(element);
             }
 
             foreach (var boundedByElement in boundedByElements)
@@ -408,6 +414,13 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
 
             if (polygons.Count == 0)
             {
+                // boundedBy 無法解析時，再嘗試 BuildingFloor 表面幾何
+                var surfaceFallback = ExtractSurfaceGeometry(element);
+                if (surfaceFallback.Coordinates.Count > 0)
+                {
+                    return surfaceFallback;
+                }
+
                 return new XmlGeometryExtractionResult
                 {
                     BoundedByRaw = ExtractElementText(boundedByElements[0]),
@@ -421,6 +434,57 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 BoundedByRaw = JsonSerializer.Serialize(polygons),
                 Coordinates = polygons,
                 Messages = messages,
+            };
+        }
+
+        /// <summary>
+        /// 萃取 BuildingFloor 的 WallSurface / FloorSurface / CeilingSurface JSON 多邊形
+        /// </summary>
+        private static XmlGeometryExtractionResult ExtractSurfaceGeometry(XElement element)
+        {
+            var polygons = new List<List<List<double>>>();
+            var sourceNames = new List<string>();
+
+            foreach (var surfaceName in XmlSurfaceNames)
+            {
+                var surfaceElements = element
+                    .Elements()
+                    .Where(el => MatchesLocalName(el.Name, surfaceName))
+                    .ToList();
+
+                foreach (var surfaceElement in surfaceElements)
+                {
+                    var text = ExtractElementText(surfaceElement);
+                    if (!TryParseCoordinateJson(text, out var surfacePolygons))
+                    {
+                        continue;
+                    }
+
+                    polygons.AddRange(surfacePolygons);
+                    if (!sourceNames.Contains(surfaceName))
+                    {
+                        sourceNames.Add(surfaceName);
+                    }
+                }
+            }
+
+            if (polygons.Count == 0)
+            {
+                return new XmlGeometryExtractionResult
+                {
+                    BoundedByRaw = "",
+                    Coordinates = new(),
+                };
+            }
+
+            return new XmlGeometryExtractionResult
+            {
+                BoundedByRaw = JsonSerializer.Serialize(polygons),
+                Coordinates = polygons,
+                Messages =
+                [
+                    $"BuildingFloor 表面幾何：已自 {string.Join("、", sourceNames)} 合併為 3D 多邊形。",
+                ],
             };
         }
 
@@ -730,7 +794,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
 
         #region ◆批次檢測垂直幾何異常 [DetectAbnormalIssues]
         /// <summary>
-        /// 批次檢測垂直幾何異常：單樓層高度合理性與跨樓層垂直連續性
+        /// 批次檢測垂直幾何異常：單樓層高度合理性、跨樓層垂直連續性與樓層號缺漏
         /// </summary>
         private void DetectAbnormalIssues(List<BuildingData> buildings)
         {
@@ -764,6 +828,105 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                         curr,
                         GeoJsonFloorOrdering.GetDisplayLabel(prev.Floor),
                         GeoJsonFloorOrdering.GetDisplayLabel(curr.Floor));
+                }
+            }
+
+            // 一般地上樓層號跳號（樓層缺漏）檢測
+            DetectMissingFloorNumbers(buildings);
+        }
+        #endregion
+
+        #region ◆檢測樓層號缺漏 [DetectMissingFloorNumbers]
+        /// <summary>
+        /// 依建號掃描一般地上樓層（regular）編號，標記樓層缺漏：
+        /// 1. 最低 regular 大於 1：
+        ///    - 建號內僅單一 regular 樓層號 → 僅寫入提示（不標 Abnormal，常見於區分所有／每層不同建號）；
+        ///    - 建號內有多個 regular 樓層號 → 標為缺地下層異常；
+        /// 2. 相鄰現有樓層號之間有缺號 → 中間缺層異常。
+        /// 僅處理 regular（如 001／1F），排除 B1、R01 等特殊樓層。
+        /// </summary>
+        private void DetectMissingFloorNumbers(List<BuildingData> buildings)
+        {
+            var groups = buildings
+                .Where(b => !string.Equals(b.BuildingNo, "UNKNOWN_NO", StringComparison.Ordinal))
+                .GroupBy(b => b.BuildingNo);
+
+            foreach (var group in groups)
+            {
+                var regularByNumber = group
+                    .Select(b => (Building: b, Key: GeoJsonFloorOrdering.Parse(b.Floor)))
+                    .Where(x => x.Key.Category == GeoJsonFloorOrdering.FloorCategory.Regular)
+                    .GroupBy(x => x.Key.Number)
+                    .OrderBy(g => g.Key)
+                    .ToList();
+
+                if (regularByNumber.Count == 0)
+                {
+                    continue;
+                }
+
+                // 最低 regular > 1
+                var lowestGroup = regularByNumber[0];
+                var lowestNo = lowestGroup.Key;
+                if (lowestNo > 1)
+                {
+                    var missingLabels = string.Join(
+                        "、",
+                        Enumerable.Range(1, lowestNo - 1).Select(n => $"{n:D3} 樓"));
+                    var lowestLabel = GeoJsonFloorOrdering.GetDisplayLabel(lowestGroup.First().Building.Floor);
+
+                    if (regularByNumber.Count == 1)
+                    {
+                        // 單層建號：僅提示，不進異常清單（可能為區分所有／每層不同建號）
+                        var tip =
+                            $"樓層提示：未列入樓層缺漏——視覺上可能浮空或缺少較低樓層，"
+                            + $"但此建號僅含 {lowestLabel} 樓（缺少 {missingLabels}）。"
+                            + "因可能為區分所有／每層不同建號，僅提示不標異常；請與同檔其他建號一併檢視";
+                        foreach (var item in lowestGroup)
+                        {
+                            AddUniqueMessage(item.Building.FixMessages, tip);
+                        }
+                    }
+                    else
+                    {
+                        var message =
+                            $"樓層缺漏：缺地下層／缺少 {missingLabels}（最低現有樓層為 {lowestLabel}）";
+                        foreach (var item in lowestGroup)
+                        {
+                            MarkAbnormal(item.Building, message);
+                        }
+                    }
+                }
+
+                // 相鄰現有樓層號之間的中間缺號
+                for (var i = 1; i < regularByNumber.Count; i++)
+                {
+                    var lowerGroup = regularByNumber[i - 1];
+                    var upperGroup = regularByNumber[i];
+                    var lowerNo = lowerGroup.Key;
+                    var upperNo = upperGroup.Key;
+                    if (upperNo - lowerNo <= 1)
+                    {
+                        continue;
+                    }
+
+                    var missingLabels = string.Join(
+                        "、",
+                        Enumerable.Range(lowerNo + 1, upperNo - lowerNo - 1)
+                            .Select(n => $"{n:D3} 樓"));
+                    var lowerLabel = GeoJsonFloorOrdering.GetDisplayLabel(lowerGroup.First().Building.Floor);
+                    var upperLabel = GeoJsonFloorOrdering.GetDisplayLabel(upperGroup.First().Building.Floor);
+                    var message = $"樓層缺漏：缺少 {missingLabels}（介於 {lowerLabel} 與 {upperLabel} 之間）";
+
+                    foreach (var item in lowerGroup)
+                    {
+                        MarkAbnormal(item.Building, message);
+                    }
+
+                    foreach (var item in upperGroup)
+                    {
+                        MarkAbnormal(item.Building, message);
+                    }
                 }
             }
         }

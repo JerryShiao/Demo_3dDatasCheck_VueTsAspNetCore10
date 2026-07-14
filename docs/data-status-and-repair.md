@@ -54,12 +54,14 @@
 | 舊版 JSON 陣列 | `boundedBy` JSON 字串 | 直接反序列化為 `List<List<List<double>>>` |
 | GeoJSON FeatureCollection | `geometry.coordinates` | 由 `GeoJsonSolidInflator` 轉成既有 3D polygon 陣列；必要時自動補成立體 |
 | 舊版 XML | `<boundedBy>` 內的 JSON 字串 | 與舊版 JSON 相同，直接反序列化 |
+| BuildingFloor XML | `WallSurface` / `FloorSurface` / `CeilingSurface` JSON | 合併各表面多邊形為既有 3D polygon 陣列 |
 | CityGML / 地政 XML | `gml:Polygon` / `gml:posList` / `gml:pos` | 逐一讀取點列，必要時依 CRS 轉換為 `[lon, lat, z]` polygon 陣列 |
 
 CityGML / 地政 XML 路徑另外有以下相容規則：
 
 - XML 節點比對以 `local-name` 為準，忽略 namespace prefix 與大小寫差異。
-- 會辨識 `ConsistsOfBuildingPart`、`BuildingRegistration`、`產權建物`、`建物產權空間` 等常見建物節點。
+- 會辨識 `ConsistsOfBuildingPart`、`BuildingRegistration`、`產權建物`、`建物產權空間`、`BuildingFloor` 等常見建物節點。
+- `BuildingFloor` 若無 `boundedBy`，會改讀 `WallSurface`、`FloorSurface`、`CeilingSurface`（內嵌 JSON 多邊形陣列），並依牆→地板→天花板順序合併。
 - `MID` / `OID` 缺漏時，會優先使用 `gml:id`；若仍無法取得，才會用 `建號母號 + 層次` 或流水號組出 fallback 識別值。
 - `gml:posList` 若是 2D 座標，後端會自動補 `z = 0`，讓後續流程仍可沿用既有 3D 幾何處理。
 - `srsName` 會優先從 `posList` / `pos`、`LinearRing`、`Polygon`、`MultiSurface`、`boundedBy` 與祖先節點中查找。
@@ -99,7 +101,7 @@ CityGML / 地政 XML 路徑另外有以下相容規則：
 - `BuildingDemo.detectTerrainAbnormal()` 未因地形高差再次標記為異常
 
 ### 2.4 異常
-`異常` 對應 `isAbnormal = true`，涵蓋多種垂直幾何異常，包含離地浮空、樓層高度異常、垂直斷層、垂直重疊與樓層高度倒置。
+`異常` 對應 `isAbnormal = true`，涵蓋多種垂直幾何異常，包含離地浮空、樓層高度異常、垂直斷層、垂直重疊、樓層高度倒置與樓層號缺漏。
 
 #### 後端會標記為異常的情況
 後端在 `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Services/BuildingProcessorService.cs` 中，透過 `DetectAbnormalIssues()` 呼叫以下檢測。閾值由 `appsettings.json` 的 `BuildingAbnormalDetection` 區段設定，並經 `BuildingAbnormalDetectionOptions` 注入服務（修改設定後需重啟後端才會生效）。
@@ -120,12 +122,25 @@ CityGML / 地政 XML 路徑另外有以下相容規則：
   - 相鄰樓層落差大於 `MaxFloorGap`，標記為垂直斷層
   - 相鄰樓層重疊超過 `FloorGapTolerance`，標記為垂直重疊
   - 上層底部低於下層底部，標記為樓層高度倒置
+- `DetectMissingFloorNumbers()`
+  - 同建號內一般地上樓層（regular，如 `001`／`1F`）編號缺漏時處理；不掃描地下室（B1）或屋頂層（R01）
+  - **缺地下層（單層建號 → 僅提示）**：建號內只有一個 regular 樓層號且該號 > 1（例如僅有 `002`）時，寫入 `FixMessages` 的「樓層提示：未列入樓層缺漏——…」（說明視覺浮空／缺較低樓層但可能因區分所有／每層不同建號），**不**設定 `IsAbnormal`，也不進入異常／修復清單
+  - **缺地下層（多層建號 → 異常）**：建號內有多個 regular 樓層且最低號 > 1（例如 `002`+`003` 而無 `001`）時，對最低現有樓層 `MarkAbnormal`「缺地下層／缺少 `001`…」
+  - **中間跳號（異常）**：相鄰現有樓層號之間有缺號（例如 `001` 與 `003` 缺 `002`）時，對缺號兩端樓層標記「缺少 `002` 樓」
 
-上述情況都會透過 `MarkAbnormal()`：
+上述異常情況都會透過 `MarkAbnormal()`：
 
 - 設定 `IsAbnormal = true`
 - 設定 `IsValid = false`
 - 將異常訊息寫入 `ErrorMessages`
+
+單層建號的「樓層提示」僅寫入 `FixMessages`，狀態仍為 `正常`，列表會顯示：
+
+- 狀態徽章：`正常（有提示）`
+- 「訊息」欄：完整提示文案（含「未列入樓層缺漏」原因）
+- 地圖資訊框另有「提示資訊」欄
+
+> 注意：「垂直斷層」依 Z 軸落差判定，「樓層缺漏」異常依樓層號判定（多層缺地下層與中間跳號）；單層建號缺較低樓層則降為提示。
 
 #### 前端會補充標記為異常的情況
 前端在 `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/BuildingDemo.vue` 的 `detectTerrainAbnormal()` 中，會使用 Cesium 地形取樣補做一次判斷：
@@ -429,6 +444,8 @@ flowchart TD
 - `垂直斷層`
 - `樓層高度倒置`
 
+另會呼叫 `refreshMissingFloorNumberErrors()`，清除舊的 `樓層缺漏`／`樓層提示` 後，依目前 regular 樓層號重新標記（單層缺較低樓層僅提示；多層缺地下層與中間跳號才標異常，規則與後端 `DetectMissingFloorNumbers` 對齊）。缺號已補齊時，相關訊息會一併消失。
+
 若某筆資料的 `errorMessages` 被清空，則會同步：
 
 - 設定 `isAbnormal = false`
@@ -457,6 +474,7 @@ flowchart TD
 - 垂直斷層
 - 垂直重疊
 - 樓層高度倒置
+- 樓層缺漏（多層建號缺地下層／中間跳號；單層建號僅「樓層提示」不進異常）
 
 畫面顯示的「異常」與程式欄位 `isAbnormal` 已一致；`errorMessages` 中的具體描述（如「疑似浮空」）則保留各異常類型的細節說明。
 

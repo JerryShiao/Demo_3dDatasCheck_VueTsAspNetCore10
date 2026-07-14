@@ -623,6 +623,7 @@
             <p><b>高度範圍:</b> ${buildingObj.minHeight ?? '-'} ~ ${buildingObj.maxHeight ?? '-'} m</p>
             <p><b>異常狀態:</b> ${buildingObj.isAbnormal ? '是' : '否'}</p>
             <p><b>異常資訊:</b> ${buildingObj.errorMessages.join(', ') || '無'}</p>
+            <p><b>提示資訊:</b> ${(buildingObj.fixMessages ?? []).filter((m) => m.includes('樓層提示') || m.includes('未列入樓層缺漏')).join(', ') || '無'}</p>
             <p><b>修復紀錄:</b> ${buildingObj.fixMessages.join(', ') || '無'}</p>
           `,
             // 建物多邊形設定

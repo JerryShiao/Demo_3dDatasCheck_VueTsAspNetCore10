@@ -38,6 +38,67 @@ public class BuildingProcessorServiceTests
     }
 
     [Fact]
+    public void ProcessXml_BuildingFloorSurfaces_MergesWallFloorCeilingPolygons()
+    {
+        var service = CreateService();
+        var xml = """
+            <ArrayOfBuildingFloor xmlns:i="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://schemas.datacontract.org/2004/07/ModelOfBuilding_WebAPI.Models">
+              <BuildingFloor>
+                <CeilingSurface>[[[120.552611,22.4330087,3.2],[120.552599,22.4330204,3.2],[120.5526154,22.4330351,3.2],[120.5526275,22.4330233,3.2],[120.552611,22.4330087,3.2]]]</CeilingSurface>
+                <FloorSurface>[[[120.552611,22.4330087,0],[120.552599,22.4330204,0],[120.5526154,22.4330351,0],[120.5526275,22.4330233,0],[120.552611,22.4330087,0]]]</FloorSurface>
+                <MID>3347</MID>
+                <OID>7683</OID>
+                <WallSurface>[[[120.552611,22.4330087,0],[120.5526275,22.4330233,0],[120.5526275,22.4330233,3.2],[120.552611,22.4330087,3.2],[120.552611,22.4330087,0]],[[120.5526275,22.4330233,0],[120.5526154,22.4330351,0],[120.5526154,22.4330351,5],[120.5526275,22.4330233,5],[120.5526275,22.4330233,0]]]</WallSurface>
+                <層次>001</層次>
+                <高度>3.200</高度>
+                <高度來源>預設樓高</高度來源>
+              </BuildingFloor>
+            </ArrayOfBuildingFloor>
+            """;
+
+        var result = service.ProcessXml(xml);
+
+        var building = Assert.Single(result);
+        Assert.Equal("3347", building.Mid);
+        Assert.Equal("7683", building.Oid);
+        Assert.Equal("001", building.Floor);
+        Assert.Equal(4, building.Coordinates.Count); // 2 walls + floor + ceiling
+        Assert.Equal(0, building.MinHeight);
+        Assert.Equal(5, building.MaxHeight);
+        Assert.Contains(building.FixMessages, message => message.Contains("BuildingFloor 表面幾何"));
+        Assert.All(building.Coordinates.SelectMany(polygon => polygon), point =>
+        {
+            Assert.InRange(point[0], 120d, 121d);
+            Assert.InRange(point[1], 22d, 23d);
+        });
+    }
+
+    [Fact]
+    public void ProcessXml_BuildingFloor_WallSurfaceOnly_StillParses()
+    {
+        var service = CreateService();
+        var xml = """
+            <ArrayOfBuildingFloor>
+              <BuildingFloor>
+                <MID>10</MID>
+                <OID>20</OID>
+                <WallSurface>[[[120.55,22.43,0],[120.56,22.43,0],[120.56,22.43,3],[120.55,22.43,3],[120.55,22.43,0]]]</WallSurface>
+                <層次>002</層次>
+              </BuildingFloor>
+            </ArrayOfBuildingFloor>
+            """;
+
+        var result = service.ProcessXml(xml);
+
+        var building = Assert.Single(result);
+        Assert.Equal("10", building.Mid);
+        Assert.Equal("002", building.Floor);
+        Assert.Single(building.Coordinates);
+        Assert.Equal(0, building.MinHeight);
+        Assert.Equal(3, building.MaxHeight);
+    }
+
+    [Fact]
     public void ProcessXml_LegacyJsonBoundedBy_WithTaiwanTm2Coordinates_TransformsToWgs84()
     {
         var service = CreateService();
@@ -518,6 +579,239 @@ public class BuildingProcessorServiceTests
         Assert.Equal("F001", building.BuildingNo);
         Assert.False(building.IsAbnormal);
         Assert.Contains(building.FixMessages, message => message.Contains("CityGML 匯入提示"));
+    }
+
+    [Fact]
+    public void ProcessJson_RegularFloorNumberGap_MarksMissingFloorAbnormal()
+    {
+        var service = CreateService();
+        // 001 與 003 垂直連續堆疊（無重疊／斷層），僅缺樓層號 002
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "GAP01",
+                "層次": "001",
+                "boundedBy": "[[[121.0,25.0,0],[121.001,25.0,0],[121.001,25.001,3],[121.0,25.001,3],[121.0,25.0,0]]]"
+              },
+              {
+                "MID": 2,
+                "OID": 2,
+                "建號母號": "GAP01",
+                "層次": "003",
+                "boundedBy": "[[[121.0,25.0,3],[121.001,25.0,3],[121.001,25.001,6],[121.0,25.001,6],[121.0,25.0,3]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        Assert.Equal(2, result.Count);
+        Assert.All(result, b => Assert.True(b.IsAbnormal));
+        Assert.All(result, b => Assert.Contains(
+            b.ErrorMessages,
+            m => m.Contains("樓層缺漏") && m.Contains("002") && m.Contains("001") && m.Contains("003")));
+        Assert.All(result, b => Assert.DoesNotContain(b.ErrorMessages, m => m.Contains("垂直重疊")));
+        Assert.All(result, b => Assert.DoesNotContain(b.ErrorMessages, m => m.Contains("垂直斷層")));
+    }
+
+    [Fact]
+    public void ProcessJson_BasementAndRooftop_DoNotTriggerMissingFloorBetweenRegular()
+    {
+        var service = CreateService();
+        // B1 + 001 + R01，一般層連續，不應因地下室／屋頂而標樓層缺漏
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "MIX01",
+                "層次": "B1",
+                "boundedBy": "[[[121.0,25.0,-3],[121.001,25.0,-3],[121.001,25.001,0],[121.0,25.001,0],[121.0,25.0,-3]]]"
+              },
+              {
+                "MID": 2,
+                "OID": 2,
+                "建號母號": "MIX01",
+                "層次": "001",
+                "boundedBy": "[[[121.0,25.0,0],[121.001,25.0,0],[121.001,25.001,3],[121.0,25.001,3],[121.0,25.0,0]]]"
+              },
+              {
+                "MID": 3,
+                "OID": 3,
+                "建號母號": "MIX01",
+                "層次": "R01",
+                "boundedBy": "[[[121.0,25.0,3],[121.001,25.0,3],[121.001,25.001,4],[121.0,25.001,4],[121.0,25.0,3]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        Assert.Equal(3, result.Count);
+        Assert.All(result, b => Assert.DoesNotContain(b.ErrorMessages, m => m.Contains("樓層缺漏")));
+    }
+
+    [Fact]
+    public void ProcessJson_ContinuousRegularFloors_NoMissingFloorMessage()
+    {
+        var service = CreateService();
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "OK01",
+                "層次": "001",
+                "boundedBy": "[[[121.0,25.0,0],[121.001,25.0,0],[121.001,25.001,3],[121.0,25.001,3],[121.0,25.0,0]]]"
+              },
+              {
+                "MID": 2,
+                "OID": 2,
+                "建號母號": "OK01",
+                "層次": "002",
+                "boundedBy": "[[[121.0,25.0,3],[121.001,25.0,3],[121.001,25.001,6],[121.0,25.001,6],[121.0,25.0,3]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        Assert.Equal(2, result.Count);
+        Assert.All(result, b => Assert.DoesNotContain(b.ErrorMessages, m => m.Contains("樓層缺漏")));
+    }
+
+    [Fact]
+    public void ProcessJson_LowestRegularAboveOne_SingleFloor_WritesTipOnly()
+    {
+        var service = CreateService();
+        // 建號內僅有 002（無 001）→ 僅提示，不進異常
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "FLOAT02",
+                "層次": "002",
+                "boundedBy": "[[[121.0,25.0,3.2],[121.001,25.0,3.2],[121.001,25.001,6.4],[121.0,25.001,6.4],[121.0,25.0,3.2]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        var building = Assert.Single(result);
+        Assert.False(building.IsAbnormal);
+        Assert.True(building.IsValid);
+        Assert.DoesNotContain(building.ErrorMessages, m => m.Contains("樓層缺漏"));
+        Assert.Contains(
+            building.FixMessages,
+            m => m.Contains("樓層提示")
+                && m.Contains("未列入樓層缺漏")
+                && m.Contains("區分所有")
+                && m.Contains("001")
+                && m.Contains("002"));
+    }
+
+    [Fact]
+    public void ProcessJson_LowestRegularIsThree_SingleFloor_WritesTipOnly()
+    {
+        var service = CreateService();
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "HIGH03",
+                "層次": "003",
+                "boundedBy": "[[[121.0,25.0,6.4],[121.001,25.0,6.4],[121.001,25.001,9.6],[121.0,25.001,9.6],[121.0,25.0,6.4]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        var building = Assert.Single(result);
+        Assert.False(building.IsAbnormal);
+        Assert.Contains(
+            building.FixMessages,
+            m => m.Contains("樓層提示")
+                && m.Contains("未列入樓層缺漏")
+                && m.Contains("001")
+                && m.Contains("002")
+                && m.Contains("003"));
+    }
+
+    [Fact]
+    public void ProcessJson_MultiFloorWithout001_MarksMissingGroundAbnormal()
+    {
+        var service = CreateService();
+        // 同建號有 002+003 而無 001 → 仍標缺地下層異常
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "NO1F",
+                "層次": "002",
+                "boundedBy": "[[[121.0,25.0,3.2],[121.001,25.0,3.2],[121.001,25.001,6.4],[121.0,25.001,6.4],[121.0,25.0,3.2]]]"
+              },
+              {
+                "MID": 2,
+                "OID": 2,
+                "建號母號": "NO1F",
+                "層次": "003",
+                "boundedBy": "[[[121.0,25.0,6.4],[121.001,25.0,6.4],[121.001,25.001,9.6],[121.0,25.001,9.6],[121.0,25.0,6.4]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        Assert.Equal(2, result.Count);
+        var floor002 = Assert.Single(result, b => b.Floor == "002");
+        Assert.True(floor002.IsAbnormal);
+        Assert.Contains(
+            floor002.ErrorMessages,
+            m => m.Contains("樓層缺漏") && m.Contains("缺地下層") && m.Contains("001"));
+    }
+
+    [Fact]
+    public void ProcessJson_BasementAndRegularStartingAtTwo_SingleRegular_WritesTipOnly()
+    {
+        var service = CreateService();
+        // B1 不算 regular；僅一個 regular=002 → 僅提示（Z 連續，避免垂直斷層干擾）
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "B1NO1F",
+                "層次": "B1",
+                "boundedBy": "[[[121.0,25.0,-3],[121.001,25.0,-3],[121.001,25.001,0],[121.0,25.001,0],[121.0,25.0,-3]]]"
+              },
+              {
+                "MID": 2,
+                "OID": 2,
+                "建號母號": "B1NO1F",
+                "層次": "002",
+                "boundedBy": "[[[121.0,25.0,0],[121.001,25.0,0],[121.001,25.001,3],[121.0,25.001,3],[121.0,25.0,0]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        Assert.Equal(2, result.Count);
+        var floor002 = Assert.Single(result, b => b.Floor == "002");
+        Assert.False(floor002.IsAbnormal);
+        Assert.Contains(
+            floor002.FixMessages,
+            m => m.Contains("樓層提示") && m.Contains("未列入樓層缺漏") && m.Contains("001"));
+        var basement = Assert.Single(result, b => b.Floor == "B1");
+        Assert.DoesNotContain(basement.FixMessages, m => m.Contains("樓層提示"));
+        Assert.DoesNotContain(basement.ErrorMessages, m => m.Contains("樓層缺漏"));
     }
 
     private static BuildingProcessorService CreateService(IXmlImportPreprocessor? preprocessor = null)

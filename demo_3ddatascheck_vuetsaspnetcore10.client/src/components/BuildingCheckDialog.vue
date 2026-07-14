@@ -137,6 +137,7 @@
                 <th class="sortable-th" @click="toggleSort('status')">
                   狀態<span v-if="sortKey === 'status'" class="sort-indicator">{{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
                 </th>
+                <th>訊息</th>
               </tr>
             </thead>
             <tbody>
@@ -152,9 +153,17 @@
                 <td>{{ b.floor }}</td>
                 <td>
                   <span v-if="b.isAbnormal" class="badge abnormal" :title="b.errorMessages.join(', ')">異常</span>
-                  <span v-else-if="b.isValid && !b.isFixed" class="badge success">正常</span>
+                  <template v-else-if="b.isValid && !b.isFixed">
+                    <span v-if="hasFloorSkipTip(b)"
+                          class="badge tip"
+                          :title="getFloorSkipTips(b).join(', ')">正常（有提示）</span>
+                    <span v-else class="badge success">正常</span>
+                  </template>
                   <span v-else-if="b.isFixed" class="badge warning" :title="b.fixMessages.join(', ')">已修復</span>
                   <span v-else class="badge danger" :title="b.errorMessages.join(', ')">錯誤</span>
+                </td>
+                <td class="message-cell" :title="getListMessages(b)">
+                  {{ getListMessages(b) || '—' }}
                 </td>
               </tr>
             </tbody>
@@ -484,6 +493,43 @@
   }
   //#endregion
 
+  //#region ◆是否有未列入樓層缺漏提示 [hasFloorSkipTip]
+  /** 單層建號未列入樓層缺漏的提示（寫在 fixMessages） */
+  function hasFloorSkipTip(b: BuildingPart): boolean {
+    return getFloorSkipTips(b).length > 0;
+  }
+  //#endregion
+
+  //#region ◆取得樓層跳過提示 [getFloorSkipTips]
+  function getFloorSkipTips(b: BuildingPart): string[] {
+    return (b.fixMessages ?? []).filter(
+      (m) => m.includes('樓層提示') || m.includes('未列入樓層缺漏'),
+    );
+  }
+  //#endregion
+
+  //#region ◆列表訊息欄內容 [getListMessages]
+  /**
+   * 列表「訊息」欄：異常／錯誤顯示 errorMessages；有樓層提示時顯示提示；已修復顯示 fixMessages
+   */
+  function getListMessages(b: BuildingPart): string {
+    if (b.isAbnormal) {
+      return (b.errorMessages ?? []).join('；');
+    }
+    const tips = getFloorSkipTips(b);
+    if (tips.length > 0) {
+      return tips.join('；');
+    }
+    if (b.isFixed) {
+      return (b.fixMessages ?? []).join('；');
+    }
+    if (!b.isValid) {
+      return (b.errorMessages ?? []).join('；');
+    }
+    return '';
+  }
+  //#endregion
+
   //#region ◆建物狀態排序順序 [getStatusSortOrder]
   /**
    * 建物狀態排序順序
@@ -509,7 +555,7 @@
     top: 80px;
     left: 16px;
     z-index: 20;
-    width: 600px;
+    width: 720px;
     height: 70vh;
     display: flex;
     flex-direction: column;
@@ -731,6 +777,10 @@
     background: #2b8a3e;
   }
 
+  .badge.tip {
+    background: #0c8599;
+  }
+
   .warning {
     background: #e67e22;
   }
@@ -741,6 +791,15 @@
 
   .abnormal {
     background: #7048e8;
+  }
+
+  .message-cell {
+    max-width: 280px;
+    font-size: 12px;
+    color: #495057;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .resize-handle {
