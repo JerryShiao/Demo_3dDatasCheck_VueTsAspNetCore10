@@ -42,7 +42,7 @@ function makeSolidFloor(
     oid: partial.mid,
     buildingNo: partial.buildingNo,
     floor: partial.floor,
-    coordinates: [floorRing, ceilingRing, ...walls],
+    coordinates: [floorRing, ceilingRing, ...walls] as BuildingPart['coordinates'],
     minHeight: minZ,
     maxHeight: maxZ,
     isValid: false,
