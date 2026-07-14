@@ -286,7 +286,7 @@ flowchart TD
 3. 在已勾選異常樓層的 regular 編號區間內，找出不存在的缺號
 4. 連續缺號區段長度超過 `maxMissingFloors` 則跳過該區段
 5. 插入前檢查該樓層號是否已存在，避免重複補層
-6. 高度以缺號上下最近的 regular 樓層之 `maxHeight`／`minHeight` 均分；無法推算時使用預設層高 `3.0m`
+6. 高度以缺號上下最近的 regular 樓層之 `maxHeight`／`minHeight` 之間的空隙，**僅均分給缺號樓層數**（`span / missingCount`）；無法推算時使用預設層高 `3.0m`。例如 001 頂 `3.2`、003 底 `6.4` 且只缺 002 時，補層槽位為 `3.2~6.4`（不會再除以 N+1 留下半段空缺）
 7. 補齊樓層命名為三位數，例如 `002`
 
 ### 5.5 策略 B：垂直空缺（`applyVerticalGapRepair`）
@@ -438,13 +438,10 @@ flowchart TD
 最後同樣會由 `clearResolvedVerticalErrors()` 重新檢查並清除已解決的垂直異常。
 
 ### 6.7 清除已解決垂直異常
-`clearResolvedVerticalErrors()` 會重新檢查同建號相鄰樓層的垂直關係，並依 `FloorGapTolerance`、`MaxFloorGap`（來自 `buildingDetectionConfig`）判斷是否可移除以下訊息：
+`clearResolvedVerticalErrors()` 會對同一建號：
 
-- `垂直重疊`
-- `垂直斷層`
-- `樓層高度倒置`
-
-另會呼叫 `refreshMissingFloorNumberErrors()`，清除舊的 `樓層缺漏`／`樓層提示` 後，依目前 regular 樓層號重新標記（單層缺較低樓層僅提示；多層缺地下層與中間跳號才標異常，規則與後端 `DetectMissingFloorNumbers` 對齊）。缺號已補齊時，相關訊息會一併消失。
+1. 呼叫 `refreshVerticalContinuityErrors()`：先清除既有的 `垂直重疊`／`垂直斷層`／`樓層高度倒置` 訊息，再依**目前樓層號排序後的相鄰對**重算並寫回仍成立的異常。因此補入中間樓層後，原本「001 與 003 垂直斷層」這類已非相鄰的舊訊息會被拿掉，不會卡在清單上。
+2. 呼叫 `refreshMissingFloorNumberErrors()`：清除舊的 `樓層缺漏`／`樓層提示` 後，依目前 regular 樓層號重新標記（單層缺較低樓層僅提示；多層缺地下層與中間跳號才標異常）。缺號已補齊時，樓層缺漏訊息會一併消失。
 
 若某筆資料的 `errorMessages` 被清空，則會同步：
 

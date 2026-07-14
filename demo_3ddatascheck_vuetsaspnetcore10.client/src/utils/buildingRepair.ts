@@ -588,8 +588,9 @@ function computeMissingFloorHeightSlot(
         maxZ: lowerMax + DEFAULT_FLOOR_HEIGHT,
       };
     }
+    // 空隙僅分給缺號樓層（勿再 +1，否則會留下半段空缺讓上層看起來仍浮空）
     const span = upperMin - lowerMax;
-    const slotHeight = span > 0 ? span / (missingBetween + 1) : DEFAULT_FLOOR_HEIGHT;
+    const slotHeight = span > 0 ? span / missingBetween : DEFAULT_FLOOR_HEIGHT;
     const k = floorNo - lowerNo;
     return {
       minZ: lowerMax + (k - 1) * slotHeight,
@@ -939,33 +940,159 @@ function getHeightBounds(building: BuildingPart): { minZ: number; maxZ: number }
 }
 //#endregion
 
-//#region ◆移除已解決的垂直重疊訊息 [removeVerticalOverlapMessages]
-function removeVerticalOverlapMessages(building: BuildingPart, neighborFloor: string): void {
-  building.errorMessages = building.errorMessages.filter(
-    (m) => !(m.includes('垂直重疊') && m.includes(`${neighborFloor} 樓`)),
-  );
+//#region ◆重新標記樓層號缺漏訊息 [refreshMissingFloorNumberErrors]
+/**
+ * 清除舊的樓層缺漏／樓層提示後，依目前 regular 樓層號重新標記
+ *（與後端 DetectMissingFloorNumbers 對齊）
+ */
+function refreshMissingFloorNumberErrors(group: BuildingPart[]): void {
+  for (const building of group) {
+    building.errorMessages = building.errorMessages.filter((m) => !m.includes('樓層缺漏'));
+    building.fixMessages = building.fixMessages.filter((m) => !m.includes('樓層提示'));
+  }
+
+  const regularByNumber = new Map<number, BuildingPart[]>();
+  for (const building of group) {
+    const key = parseFloorSortKey(building.floor);
+    if (key.category !== 'regular') continue;
+    const list = regularByNumber.get(key.number);
+    if (list) {
+      list.push(building);
+    } else {
+      regularByNumber.set(key.number, [building]);
+    }
+  }
+
+  const numbers = [...regularByNumber.keys()].sort((a, b) => a - b);
+  if (numbers.length === 0) return;
+
+  const markAbnormalMessage = (targets: BuildingPart[], message: string): void => {
+    for (const building of targets) {
+      if (!building.errorMessages.includes(message)) {
+        building.errorMessages.push(message);
+      }
+      building.isAbnormal = true;
+      building.isValid = false;
+    }
+  };
+
+  const markTipMessage = (targets: BuildingPart[], message: string): void => {
+    for (const building of targets) {
+      if (!building.fixMessages.includes(message)) {
+        building.fixMessages.push(message);
+      }
+    }
+  };
+
+  const lowestNo = numbers[0]!;
+  if (lowestNo > 1) {
+    const lowestFloors = regularByNumber.get(lowestNo)!;
+    const missingLabels = Array.from(
+      { length: lowestNo - 1 },
+      (_, offset) => `${formatFloor(1 + offset)} 樓`,
+    ).join('、');
+    const lowestLabel = lowestFloors[0]!.floor || '?';
+
+    if (numbers.length === 1) {
+      markTipMessage(
+        lowestFloors,
+        `樓層提示：未列入樓層缺漏——視覺上可能浮空或缺少較低樓層，`
+          + `但此建號僅含 ${lowestLabel} 樓（缺少 ${missingLabels}）。`
+          + '因可能為區分所有／每層不同建號，僅提示不標異常；請與同檔其他建號一併檢視',
+      );
+    } else {
+      markAbnormalMessage(
+        lowestFloors,
+        `樓層缺漏：缺地下層／缺少 ${missingLabels}（最低現有樓層為 ${lowestLabel}）`,
+      );
+    }
+  }
+
+  for (let i = 1; i < numbers.length; i++) {
+    const lowerNo = numbers[i - 1]!;
+    const upperNo = numbers[i]!;
+    if (upperNo - lowerNo <= 1) continue;
+
+    const lowerFloors = regularByNumber.get(lowerNo)!;
+    const upperFloors = regularByNumber.get(upperNo)!;
+    const missingLabels = Array.from(
+      { length: upperNo - lowerNo - 1 },
+      (_, offset) => `${formatFloor(lowerNo + 1 + offset)} 樓`,
+    ).join('、');
+    const lowerLabel = lowerFloors[0]!.floor || '?';
+    const upperLabel = upperFloors[0]!.floor || '?';
+    markAbnormalMessage(
+      [...lowerFloors, ...upperFloors],
+      `樓層缺漏：缺少 ${missingLabels}（介於 ${lowerLabel} 與 ${upperLabel} 之間）`,
+    );
+  }
 }
 //#endregion
 
-//#region ◆移除已解決的垂直斷層訊息 [removeVerticalGapMessages]
-function removeVerticalGapMessages(building: BuildingPart, neighborFloor: string): void {
-  building.errorMessages = building.errorMessages.filter(
-    (m) => !(m.includes('垂直斷層') && m.includes(`${neighborFloor} 樓`)),
-  );
-}
-//#endregion
+//#region ◆重新標記垂直連續性異常 [refreshVerticalContinuityErrors]
+/**
+ * 清除舊的垂直斷層／重疊／倒置訊息後，依目前「樓層號排序相鄰」對重新標記。
+ * 補層後原 001↔003 訊息會被清掉；僅當目前相鄰對仍異常才寫回。
+ */
+function refreshVerticalContinuityErrors(group: BuildingPart[]): void {
+  for (const building of group) {
+    building.errorMessages = building.errorMessages.filter(
+      (m) =>
+        !m.includes('垂直斷層')
+        && !m.includes('垂直重疊')
+        && !m.includes('樓層高度倒置'),
+    );
+  }
 
-//#region ◆移除已解決的高度倒置訊息 [removeHeightInversionMessages]
-function removeHeightInversionMessages(building: BuildingPart, lowerFloor: string): void {
-  building.errorMessages = building.errorMessages.filter(
-    (m) => !(m.includes('樓層高度倒置') && m.includes(`${lowerFloor} 樓`)),
-  );
+  const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
+  const maxGap = getMaxFloorGap();
+  const tolerance = getFloorGapTolerance();
+
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const lower = sorted[i]!;
+    const upper = sorted[i + 1]!;
+    const lowerBounds = getHeightBounds(lower);
+    const upperBounds = getHeightBounds(upper);
+    if (!lowerBounds || !upperBounds) continue;
+
+    const gap = upperBounds.minZ - lowerBounds.maxZ;
+    const lowerLabel = lower.floor || '?';
+    const upperLabel = upper.floor || '?';
+
+    if (gap > maxGap) {
+      const lowerMsg = `與 ${upperLabel} 樓之間垂直斷層（落差 ${gap.toFixed(1)}m，超過 ${maxGap}m）`;
+      const upperMsg = `與 ${lowerLabel} 樓之間垂直斷層（落差 ${gap.toFixed(1)}m，超過 ${maxGap}m）`;
+      if (!lower.errorMessages.includes(lowerMsg)) lower.errorMessages.push(lowerMsg);
+      if (!upper.errorMessages.includes(upperMsg)) upper.errorMessages.push(upperMsg);
+      lower.isAbnormal = true;
+      lower.isValid = false;
+      upper.isAbnormal = true;
+      upper.isValid = false;
+    } else if (gap < -tolerance) {
+      const overlap = Math.abs(gap);
+      const lowerMsg = `與 ${upperLabel} 樓垂直重疊（重疊 ${overlap.toFixed(1)}m）`;
+      const upperMsg = `與 ${lowerLabel} 樓垂直重疊（重疊 ${overlap.toFixed(1)}m）`;
+      if (!lower.errorMessages.includes(lowerMsg)) lower.errorMessages.push(lowerMsg);
+      if (!upper.errorMessages.includes(upperMsg)) upper.errorMessages.push(upperMsg);
+      lower.isAbnormal = true;
+      lower.isValid = false;
+      upper.isAbnormal = true;
+      upper.isValid = false;
+    }
+
+    if (upperBounds.minZ < lowerBounds.minZ) {
+      const invMsg = `樓層高度倒置：${upperLabel} 樓底部低於 ${lowerLabel} 樓`;
+      if (!upper.errorMessages.includes(invMsg)) upper.errorMessages.push(invMsg);
+      upper.isAbnormal = true;
+      upper.isValid = false;
+    }
+  }
 }
 //#endregion
 
 //#region ◆清除已解決的垂直異常標記 [clearResolvedVerticalErrors]
 /**
- * 重新檢核同建號相鄰樓層的垂直連續性，移除已解決的異常訊息；
+ * 重新檢核同建號垂直連續性與樓層號缺漏，移除已解決的異常訊息並重標仍存在者；
  * 若樓層已無任何異常訊息則清除 isAbnormal
  */
 function clearResolvedVerticalErrors(buildings: BuildingPart[]): void {
@@ -977,33 +1104,10 @@ function clearResolvedVerticalErrors(buildings: BuildingPart[]): void {
   }
 
   for (const group of byBuildingNo.values()) {
-    const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
+    refreshVerticalContinuityErrors(group);
+    refreshMissingFloorNumberErrors(group);
 
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const lower = sorted[i]!;
-      const upper = sorted[i + 1]!;
-      const lowerBounds = getHeightBounds(lower);
-      const upperBounds = getHeightBounds(upper);
-      if (!lowerBounds || !upperBounds) continue;
-
-      const gap = upperBounds.minZ - lowerBounds.maxZ;
-
-      if (gap >= -getFloorGapTolerance()) {
-        removeVerticalOverlapMessages(lower, upper.floor);
-        removeVerticalOverlapMessages(upper, lower.floor);
-      }
-
-      if (gap <= getMaxFloorGap() && gap >= -getFloorGapTolerance()) {
-        removeVerticalGapMessages(lower, upper.floor);
-        removeVerticalGapMessages(upper, lower.floor);
-      }
-
-      if (upperBounds.minZ >= lowerBounds.minZ) {
-        removeHeightInversionMessages(upper, lower.floor);
-      }
-    }
-
-    for (const building of sorted) {
+    for (const building of group) {
       if (building.errorMessages.length === 0) {
         building.isAbnormal = false;
         building.isValid = true;
