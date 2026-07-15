@@ -304,6 +304,8 @@ flowchart TD
 - 以鄰近樓層作為幾何模板（`pickPatchTemplate` 優先選有座標、非異常、footprint 較大者）
 - 模板無有效座標時不建立補層
 - 複製原有座標後，透過 `shiftCoordinatesZ()` 線性調整高度
+- **`MID`** 沿用同建號模板樓層的 `mid`（與同棟資料一致）
+- **`OID`** 為新建唯一值（`PATCH_建號_樓層_xxxx`），方便區分補齊紀錄；`rowId` 亦為新建 UUID
 - 新增資料會直接標記為：
   - `isValid = true`
   - `isFixed = true`

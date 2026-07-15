@@ -641,11 +641,12 @@ function createPatchedBuilding(
     maxZ,
   );
 
-  const id = `PATCH_${buildingNo}_${floor}_${crypto.randomUUID().slice(0, 8)}`;
+  // MID 沿用同建號模板樓層；OID 保留唯一值以區分補齊紀錄
+  const oid = `PATCH_${buildingNo}_${floor}_${crypto.randomUUID().slice(0, 8)}`;
 
   const building: BuildingPart = {
-    mid: id,
-    oid: id,
+    mid: template.mid,
+    oid,
     buildingNo,
     floor,
     coordinates,

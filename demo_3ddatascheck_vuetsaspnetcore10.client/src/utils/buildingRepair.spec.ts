@@ -96,6 +96,9 @@ describe('applyBuildingRepair gapRepair floorNumberGap', () => {
 
     const out001 = result.buildings.find((b) => b.floor === '001')!;
     const out003 = result.buildings.find((b) => b.floor === '003')!;
+    // MID 沿用同建號模板樓層；OID 為 PATCH_ 唯一值
+    expect([out001.mid, out003.mid]).toContain(floor002!.mid);
+    expect(floor002!.oid.startsWith('PATCH_')).toBe(true);
     expect(out001.errorMessages.some((m) => m.includes('垂直斷層'))).toBe(false);
     expect(out003.errorMessages.some((m) => m.includes('垂直斷層'))).toBe(false);
     expect(out001.errorMessages.some((m) => m.includes('樓層缺漏'))).toBe(false);
@@ -139,5 +142,10 @@ describe('applyBuildingRepair gapRepair floorNumberGap', () => {
     expect(f2.maxHeight).toBeCloseTo(7.5, 5);
     expect(f3.minHeight).toBeCloseTo(7.5, 5);
     expect(f3.maxHeight).toBeCloseTo(12, 5);
+    // MID 沿用同建號（001 mid=1 或 004 mid=4）
+    expect(['1', '4']).toContain(f2.mid);
+    expect(['1', '4']).toContain(f3.mid);
+    expect(f2.oid.startsWith('PATCH_')).toBe(true);
+    expect(f3.oid.startsWith('PATCH_')).toBe(true);
   });
 });
