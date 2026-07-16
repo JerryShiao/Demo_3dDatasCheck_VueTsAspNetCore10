@@ -14,8 +14,11 @@ builder.Services.Configure<BuildingAbnormalDetectionOptions>(
     builder.Configuration.GetSection(BuildingAbnormalDetectionOptions.SectionName));
 builder.Services.Configure<CityDoctor2Options>(
     builder.Configuration.GetSection(CityDoctor2Options.SectionName));
+builder.Services.Configure<ModelOfBuildingApiOptions>(
+    builder.Configuration.GetSection(ModelOfBuildingApiOptions.SectionName));
 
 builder.Services.AddHttpClient(); // 注入 HttpClient 服務
+builder.Services.AddHttpClient<WriteBackService>(); // 寫回外部 ConsistsOfBuildingParts API
 builder.Services.AddSingleton<ICoordinateTransformService, CoordinateTransformService>();
 builder.Services.AddSingleton<ICityDoctor2ProcessRunner, CityDoctor2ProcessRunner>();
 builder.Services.AddSingleton<ICityDoctor2Adapter, CityDoctor2Adapter>();

@@ -18,6 +18,7 @@
         @clear-building-highlight="clearBuildingHighlight"
         @clear-data="handleClearData"
         @repair-buildings="handleRepairBuildings"
+        @write-back-buildings="handleWriteBackBuildings"
         @update:visible-row-ids="onVisibleRowIdsChange"
       />
 
@@ -868,6 +869,106 @@
       Swal.fire({
         title: '資料修復失敗',
         icon: 'warning',
+      });
+    }
+  };
+  //#endregion
+
+  //#region ◆資料寫回處理 [handleWriteBackBuildings]
+  /**
+   * 將已修復樓層寫回外部資料庫
+   */
+  interface WriteBackApiResponse {
+    success: boolean;
+    message: string;
+    results: Array<{
+      rowId?: string;
+      originalOid: string;
+      newOid?: number | null;
+      isInsert: boolean;
+    }>;
+  }
+
+  interface WriteBackApiError {
+    success?: boolean;
+    message?: string;
+    failedOid?: string;
+    failedRowId?: string;
+    compensationSucceeded?: boolean;
+    compensationMessage?: string;
+  }
+
+  const handleWriteBackBuildings = async (selectedRowIds: string[]) => {
+    const selected = new Set(selectedRowIds);
+    const items = buildings.value.filter((b) => b.rowId && selected.has(b.rowId));
+    if (items.length === 0) {
+      Swal.fire({ title: '未選擇任何已修復資料', icon: 'warning' });
+      return;
+    }
+
+    try {
+      const res = await axios.post<WriteBackApiResponse>('/api/building/write-back', {
+        items: items.map((b) => ({
+          mid: b.mid,
+          oid: b.oid,
+          buildingNo: b.buildingNo,
+          floor: b.floor,
+          coordinates: b.coordinates,
+          minHeight: b.minHeight ?? null,
+          maxHeight: b.maxHeight ?? null,
+          rowId: b.rowId,
+        })),
+      });
+
+      const oidByRowId = new Map<string, string>();
+      for (const r of res.data.results ?? []) {
+        if (r.rowId && r.newOid != null) {
+          oidByRowId.set(r.rowId, String(r.newOid));
+        }
+      }
+
+      buildings.value = buildings.value.map((b) => {
+        if (!b.rowId || !selected.has(b.rowId)) return b;
+        return {
+          ...b,
+          oid: oidByRowId.get(b.rowId) ?? b.oid,
+          isFixed: false,
+          fixMessages: [],
+        };
+      });
+
+      if (viewer) {
+        renderBuildingsOnMap();
+      }
+
+      Swal.fire({
+        title: '資料寫回成功',
+        text: res.data.message || `已寫回 ${items.length} 筆`,
+        icon: 'success',
+      });
+    } catch (error) {
+      console.error('資料寫回失敗：', error);
+      let message = '資料寫回失敗';
+      if (axios.isAxiosError(error) && error.response?.data) {
+        const data = error.response.data as WriteBackApiError | string;
+        if (typeof data === 'string') {
+          message = data;
+        } else {
+          const parts = [data.message ?? message];
+          if (data.compensationMessage) {
+            parts.push(
+              data.compensationSucceeded
+                ? `補償還原：${data.compensationMessage}`
+                : `補償還原未完全成功：${data.compensationMessage}`,
+            );
+          }
+          message = parts.join('\n');
+        }
+      }
+      Swal.fire({
+        title: '資料寫回失敗',
+        text: message,
+        icon: 'error',
       });
     }
   };

@@ -66,6 +66,20 @@
             </svg>
             資料修復
           </button>
+          <button v-if="hasFixedFloors"
+                  type="button"
+                  class="import-action-btn writeback"
+                  @click="showDataWriteBackDialog = true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <ellipse cx="12" cy="5" rx="9" ry="3"
+                       stroke="currentColor" stroke-width="1.5" />
+              <path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            資料寫回
+          </button>
           <button v-if="hasImportedData"
                   type="button"
                   class="import-action-btn danger"
@@ -99,6 +113,11 @@
       <DataRepairDialog v-model="showDataRepairDialog"
                         :buildings="buildings"
                         @apply-repair="onApplyRepair" />
+
+      <!--[資料寫回]跳窗-->
+      <DataWriteBackDialog v-model="showDataWriteBackDialog"
+                           :buildings="buildings"
+                           @write-back="onWriteBack" />
 
       <!--[檢核結果] 列表-->
       <div class="section data-list">
@@ -193,6 +212,8 @@
   import FileImportDialog from './FileImportDialog.vue';        // 引入 FileImportDialog 組件，用於處理本地檔案匯入功能
   import UrlImportDialog from './UrlImportDialog.vue';          // 引入 UrlImportDialog 組件，用於處理 URL 匯入功能
   import DataRepairDialog from './DataRepairDialog.vue';        // 引入 DataRepairDialog 組件，用於資料修復功能
+  import DataWriteBackDialog from './DataWriteBackDialog.vue';  // 引入資料寫回跳窗
+  import type { WriteBackRequest } from './DataWriteBackDialog.vue';
   import { downloadBuildingsXml } from '../utils/exportBuildingsXml.ts'; // 匯出建物資料為 XML
   import type { RepairRequest } from '../utils/buildingRepair.ts';
   import Swal from 'sweetalert2'; // 引入 SweetAlert2 庫，用於顯示提示訊息
@@ -220,6 +241,7 @@
     'clear-building-highlight': [];                 // 滑鼠移出列 → 父元件清除地圖高亮
     'clear-data': [];                                 // 使用者按「清除資料」→ 父元件清除所有匯入資料
     'repair-buildings': [request: RepairRequest];   // 使用者執行資料修復
+    'write-back-buildings': [selectedRowIds: string[]]; // 使用者執行資料寫回
     'update:visible-row-ids': [rowIds: string[]];   // 篩選變更 → 父元件同步圖台建物顯示/隱藏
   }>();
 
@@ -245,6 +267,9 @@
 
   // 是否顯示 [資料修復] 跳窗
   const showDataRepairDialog = ref(false);
+
+  // 是否顯示 [資料寫回] 跳窗
+  const showDataWriteBackDialog = ref(false);
 
   // 是否顯示正常
   const showNormal = ref(true);
@@ -393,12 +418,29 @@
   const hasAbnormalFloors = computed(() => props.buildings.some((b) => b.isAbnormal));
   //#endregion
 
+  //#region ◆是否有已修復樓層 [hasFixedFloors]
+  /**
+   * 是否有已修復樓層（可寫回）
+   */
+  const hasFixedFloors = computed(() =>
+    props.buildings.some((b) => b.isFixed && !b.isAbnormal));
+  //#endregion
+
   //#region ◆執行資料修復 [onApplyRepair]
   /**
    * 執行資料修復
    */
   const onApplyRepair = (request: RepairRequest) => {
     emit('repair-buildings', request);
+  };
+  //#endregion
+
+  //#region ◆執行資料寫回 [onWriteBack]
+  /**
+   * 執行資料寫回
+   */
+  const onWriteBack = (request: WriteBackRequest) => {
+    emit('write-back-buildings', request.selectedRowIds);
   };
   //#endregion
 
@@ -670,6 +712,15 @@
 
       .import-action-btn.repair:hover {
         background: #f3f0ff;
+      }
+
+    .import-action-btn.writeback {
+      border-color: #e67700;
+      color: #e67700;
+    }
+
+      .import-action-btn.writeback:hover {
+        background: #fff9db;
       }
 
   .data-list {

@@ -1,4 +1,5 @@
-﻿using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Options;
+﻿using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Models;
+using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Options;
 using Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -24,15 +25,21 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
         /// 異常檢測閾值設定
         /// </summary>
         private readonly BuildingAbnormalDetectionOptions _detectionOptions;
+        /// <summary>
+        /// 資料寫回服務
+        /// </summary>
+        private readonly WriteBackService _writeBackService;
 
         public BuildingController(
             BuildingProcessorService processorService,
             HttpClient httpClient,
-            IOptions<BuildingAbnormalDetectionOptions> detectionOptions)
+            IOptions<BuildingAbnormalDetectionOptions> detectionOptions,
+            WriteBackService writeBackService)
         {
-            _processorService = processorService;   // 建物資料處理服務
-            _httpClient = httpClient; // HTTP 客戶端
+            _processorService = processorService;
+            _httpClient = httpClient;
             _detectionOptions = detectionOptions.Value;
+            _writeBackService = writeBackService;
         }
 
         #region ◆匯入本地檔案（支援 XML 或 JSON） [ImportFile]
@@ -118,6 +125,23 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Controllers
         public IActionResult GetDetectionSettings()
         {
             return Ok(_detectionOptions);
+        }
+        #endregion
+
+        #region ◆寫回修復後資料至 ModelOfBuilding [WriteBack]
+        /// <summary>
+        /// 將已修復樓層寫回 ConsistsOfBuildingParts（失敗時補償還原）
+        /// </summary>
+        [HttpPost("write-back")]
+        public async Task<IActionResult> WriteBack([FromBody] WriteBackRequest request, CancellationToken cancellationToken)
+        {
+            var (success, error, statusCode) = await _writeBackService.WriteBackAsync(request, cancellationToken);
+            if (success != null)
+            {
+                return Ok(success);
+            }
+
+            return StatusCode(statusCode, error);
         }
         #endregion
 

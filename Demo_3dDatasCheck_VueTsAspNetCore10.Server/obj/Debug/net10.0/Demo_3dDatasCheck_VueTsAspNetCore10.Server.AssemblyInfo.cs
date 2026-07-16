@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Demo_3dDatasCheck_VueTsAspNetCore10.Server")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b119488c9c5e9f8ed7ae61f3cc064d79ebfa0a5c")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ce5f822f9b19adb2d72860bc33a9db2c7a5d7acc")]
 [assembly: System.Reflection.AssemblyProductAttribute("Demo_3dDatasCheck_VueTsAspNetCore10.Server")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Demo_3dDatasCheck_VueTsAspNetCore10.Server")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
