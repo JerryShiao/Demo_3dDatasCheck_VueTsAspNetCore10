@@ -826,6 +826,59 @@
   };
   //#endregion
 
+  //#region ◆垂直重疊修復前地形取樣 [sampleGroundZForVerticalOverlapRepair]
+  /**
+   * 修復前取樣地形高度，供垂直重疊物理把關（穿地檢查）使用
+   */
+  const sampleGroundZForVerticalOverlapRepair = async (
+    buildingObjs: BuildingPart[],
+    selectedRowIds: Set<string>,
+  ): Promise<{ groundZByBuildingNo: Record<string, number>; sampled: boolean }> => {
+    const groundZByBuildingNo: Record<string, number> = {};
+    if (!viewer) return { groundZByBuildingNo, sampled: false };
+
+    const selectedBuildingNos = new Set<string>();
+    for (const building of buildingObjs) {
+      if (!building.isAbnormal || !building.rowId || !selectedRowIds.has(building.rowId)) continue;
+      selectedBuildingNos.add(building.buildingNo || 'UNKNOWN_NO');
+    }
+    if (selectedBuildingNos.size === 0) {
+      return { groundZByBuildingNo, sampled: false };
+    }
+
+    const byBuildingNo = new Map<string, BuildingPart[]>();
+    for (const building of buildingObjs) {
+      const key = building.buildingNo || 'UNKNOWN_NO';
+      if (!selectedBuildingNos.has(key)) continue;
+      if (!byBuildingNo.has(key)) byBuildingNo.set(key, []);
+      byBuildingNo.get(key)!.push(building);
+    }
+
+    let sampled = false;
+    for (const [buildingNo, group] of byBuildingNo.entries()) {
+      const anchor = pickVerticalAnchorBuilding(group, selectedRowIds);
+      if (!anchor?.coordinates?.length) continue;
+
+      const centroid = getBuildingCentroid(anchor);
+      if (!centroid) continue;
+
+      try {
+        const samples = [Cesium.Cartographic.fromDegrees(centroid.lon, centroid.lat)];
+        const updated = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, samples);
+        const groundZ = updated[0]?.height;
+        if (groundZ != null && Number.isFinite(groundZ)) {
+          groundZByBuildingNo[buildingNo] = groundZ;
+          sampled = true;
+        }
+      } catch (error) {
+        console.warn('垂直重疊物理把關地形取樣失敗，略過建號', buildingNo, error);
+      }
+    }
+
+    return { groundZByBuildingNo, sampled };
+  };
+  //#endregion
+
   //#region ◆資料修復處理 [handleRepairBuildings]
   /**
   * 資料修復處理
@@ -833,7 +886,21 @@
   const handleRepairBuildings = async (request: RepairRequest) => {
     try {
       const selectedRowIds = new Set(request.selectedRowIds);
-      const result = applyBuildingRepair(buildings.value, request);
+      let repairRequest = request;
+      let terrainSamplingNote = '';
+
+      if (request.mode === 'displacement' && request.verticalOverlapCorrection) {
+        const { groundZByBuildingNo, sampled } = await sampleGroundZForVerticalOverlapRepair(
+          buildings.value,
+          selectedRowIds,
+        );
+        repairRequest = { ...request, groundZByBuildingNo };
+        if (!sampled) {
+          terrainSamplingNote = '未取得地形，未檢查穿地';
+        }
+      }
+
+      const result = applyBuildingRepair(buildings.value, repairRequest);
       let repairedBuildings = result.buildings.map((b) => ({
         ...b,
         rowId: b.rowId ?? crypto.randomUUID(),
@@ -854,6 +921,9 @@
       renderBuildingsOnMap();
 
       const summaryParts = [result.summary];
+      if (terrainSamplingNote) {
+        summaryParts.push(terrainSamplingNote);
+      }
       if (terrainGroundedCount > 0) {
         summaryParts.push(`【地形貼地】已處理 ${terrainGroundedCount} 筆樓層`);
       }

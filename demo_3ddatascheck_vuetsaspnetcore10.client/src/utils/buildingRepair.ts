@@ -4,6 +4,14 @@
  */
 import type { BuildingPart } from '../types/BuildingPart.ts';
 import { getFloorGapTolerance, getMaxFloorGap } from './buildingDetectionConfig.ts';
+import { clusterByFootprint } from './buildingFootprintCluster.ts';
+import {
+  buildProjectedBounds,
+  projectSingleFloorShift,
+  snapshotOriginalBounds,
+  validateRestackPlan,
+  type PhysicalRepairContext,
+} from './repairPhysicsGuard.ts';
 
 //【型別定義】===================================================================
 /** 修正模式：gapRepair = 缺漏樓層補齊；displacement = 位移修正 */
@@ -23,6 +31,7 @@ export interface RepairRequest {
   adjacentFloorHorizontalCorrection?: boolean; // 位移修正：是否執行相鄰樓層水平對齊（預設 false）
   verticalOverlapCorrection?: boolean; // 位移修正：是否執行垂直重疊修正（Z 軸，預設 false）
   terrainGrounding?: boolean; // 位移修正：是否將錨點樓層貼地後整棟下移（預設 false）
+  groundZByBuildingNo?: Record<string, number>; // 修復前地形取樣（建號 → 地面 Z）
 }
 
 /** 位移修正子選項 */
@@ -31,6 +40,7 @@ export interface DisplacementRepairOptions {
   vertical: boolean;
   adjacentFloorHorizontal: boolean;
   verticalOverlap: boolean;
+  groundZByBuildingNo?: Record<string, number>;
 }
 
 /** 修復執行結果（回傳給父元件顯示摘要與更新資料） */
@@ -43,6 +53,7 @@ export interface RepairResult {
   summary: string;              // 人類可讀的修復摘要訊息
   gapRepairStrategy?: GapRepairStrategy;
   skippedNoTemplate?: number;   // 缺漏樓層補齊：無可用模板而跳過的區段數
+  physicsRejectedCount?: number; // 垂直重疊：物理把關跳過的建號數
 }
 
 /** 缺漏樓層補齊內部結果 */
@@ -907,8 +918,10 @@ function findNonAbnormalByFloorNo(
   group: BuildingPart[],
   floorNo: number,
   excludeRowId: string,
+  cluster?: BuildingPart[],
 ): BuildingPart | null {
-  for (const ref of group) {
+  const searchIn = cluster ?? group;
+  for (const ref of searchIn) {
     if (ref.rowId === excludeRowId) continue;
     if (ref.isAbnormal) continue;
     if (parseFloorNumber(ref.floor) === floorNo) return ref;
@@ -952,8 +965,14 @@ function refreshMissingFloorNumberErrors(group: BuildingPart[]): void {
     building.fixMessages = building.fixMessages.filter((m) => !m.includes('樓層提示'));
   }
 
+  for (const cluster of clusterByFootprint(group)) {
+    refreshMissingFloorNumberErrorsForCluster(cluster);
+  }
+}
+
+function refreshMissingFloorNumberErrorsForCluster(cluster: BuildingPart[]): void {
   const regularByNumber = new Map<number, BuildingPart[]>();
-  for (const building of group) {
+  for (const building of cluster) {
     const key = parseFloorSortKey(building.floor);
     if (key.category !== 'regular') continue;
     const list = regularByNumber.get(key.number);
@@ -1045,47 +1064,55 @@ function refreshVerticalContinuityErrors(group: BuildingPart[]): void {
     );
   }
 
-  const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
+  const clusters = clusterByFootprint(group);
   const maxGap = getMaxFloorGap();
   const tolerance = getFloorGapTolerance();
 
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const lower = sorted[i]!;
-    const upper = sorted[i + 1]!;
-    const lowerBounds = getHeightBounds(lower);
-    const upperBounds = getHeightBounds(upper);
-    if (!lowerBounds || !upperBounds) continue;
+  for (const cluster of clusters) {
+    const sorted = [...cluster].sort((a, b) => compareFloors(a.floor, b.floor));
 
-    const gap = upperBounds.minZ - lowerBounds.maxZ;
-    const lowerLabel = lower.floor || '?';
-    const upperLabel = upper.floor || '?';
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const lower = sorted[i]!;
+      const upper = sorted[i + 1]!;
+      if (lower.floor?.trim().toLowerCase() === upper.floor?.trim().toLowerCase()) {
+        continue;
+      }
 
-    if (gap > maxGap) {
-      const lowerMsg = `與 ${upperLabel} 樓之間垂直斷層（落差 ${gap.toFixed(1)}m，超過 ${maxGap}m）`;
-      const upperMsg = `與 ${lowerLabel} 樓之間垂直斷層（落差 ${gap.toFixed(1)}m，超過 ${maxGap}m）`;
-      if (!lower.errorMessages.includes(lowerMsg)) lower.errorMessages.push(lowerMsg);
-      if (!upper.errorMessages.includes(upperMsg)) upper.errorMessages.push(upperMsg);
-      lower.isAbnormal = true;
-      lower.isValid = false;
-      upper.isAbnormal = true;
-      upper.isValid = false;
-    } else if (gap < -tolerance) {
-      const overlap = Math.abs(gap);
-      const lowerMsg = `與 ${upperLabel} 樓垂直重疊（重疊 ${overlap.toFixed(1)}m）`;
-      const upperMsg = `與 ${lowerLabel} 樓垂直重疊（重疊 ${overlap.toFixed(1)}m）`;
-      if (!lower.errorMessages.includes(lowerMsg)) lower.errorMessages.push(lowerMsg);
-      if (!upper.errorMessages.includes(upperMsg)) upper.errorMessages.push(upperMsg);
-      lower.isAbnormal = true;
-      lower.isValid = false;
-      upper.isAbnormal = true;
-      upper.isValid = false;
-    }
+      const lowerBounds = getHeightBounds(lower);
+      const upperBounds = getHeightBounds(upper);
+      if (!lowerBounds || !upperBounds) continue;
 
-    if (upperBounds.minZ < lowerBounds.minZ) {
-      const invMsg = `樓層高度倒置：${upperLabel} 樓底部低於 ${lowerLabel} 樓`;
-      if (!upper.errorMessages.includes(invMsg)) upper.errorMessages.push(invMsg);
-      upper.isAbnormal = true;
-      upper.isValid = false;
+      const gap = upperBounds.minZ - lowerBounds.maxZ;
+      const lowerLabel = lower.floor || '?';
+      const upperLabel = upper.floor || '?';
+
+      if (gap > maxGap) {
+        const lowerMsg = `與 ${upperLabel} 樓之間垂直斷層（落差 ${gap.toFixed(1)}m，超過 ${maxGap}m）`;
+        const upperMsg = `與 ${lowerLabel} 樓之間垂直斷層（落差 ${gap.toFixed(1)}m，超過 ${maxGap}m）`;
+        if (!lower.errorMessages.includes(lowerMsg)) lower.errorMessages.push(lowerMsg);
+        if (!upper.errorMessages.includes(upperMsg)) upper.errorMessages.push(upperMsg);
+        lower.isAbnormal = true;
+        lower.isValid = false;
+        upper.isAbnormal = true;
+        upper.isValid = false;
+      } else if (gap < -tolerance) {
+        const overlap = Math.abs(gap);
+        const lowerMsg = `與 ${upperLabel} 樓垂直重疊（重疊 ${overlap.toFixed(1)}m）`;
+        const upperMsg = `與 ${lowerLabel} 樓垂直重疊（重疊 ${overlap.toFixed(1)}m）`;
+        if (!lower.errorMessages.includes(lowerMsg)) lower.errorMessages.push(lowerMsg);
+        if (!upper.errorMessages.includes(upperMsg)) upper.errorMessages.push(upperMsg);
+        lower.isAbnormal = true;
+        lower.isValid = false;
+        upper.isAbnormal = true;
+        upper.isValid = false;
+      }
+
+      if (upperBounds.minZ < lowerBounds.minZ) {
+        const invMsg = `樓層高度倒置：${upperLabel} 樓底部低於 ${lowerLabel} 樓`;
+        if (!upper.errorMessages.includes(invMsg)) upper.errorMessages.push(invMsg);
+        upper.isAbnormal = true;
+        upper.isValid = false;
+      }
     }
   }
 }
@@ -1200,10 +1227,13 @@ export function applyHorizontalDisplacementRepair(
       skippedCount++;
       continue; // 跳過
     }
-    // 同建號內的非異常樓層作為參考
-    const group = byBuildingNo.get(b.buildingNo || 'UNKNOWN_NO') ?? []; // 查找同建號的樓層
-    const references = group.filter(
-      (ref) => ref.rowId !== b.rowId && !ref.isAbnormal && ref.coordinates?.length, // 過濾掉自己、異常樓層和沒有座標的樓層
+    // 同建號、同 footprint 子棟內的非異常樓層作為參考
+    const group = byBuildingNo.get(b.buildingNo || 'UNKNOWN_NO') ?? [];
+    const cluster = clusterByFootprint(group).find((parts) =>
+      parts.some((part) => part.rowId === b.rowId),
+    ) ?? [b];
+    const references = cluster.filter(
+      (ref) => ref.rowId !== b.rowId && !ref.isAbnormal && ref.coordinates?.length,
     );
     // 如果沒有參考樓層，則跳過
     if (references.length === 0) {
@@ -1325,8 +1355,11 @@ export function applyVerticalDisplacementRepair(
     }
 
     const group = byBuildingNo.get(b.buildingNo || 'UNKNOWN_NO') ?? [];
-    const lowerRef = findNonAbnormalByFloorNo(group, floorNo - 1, b.rowId);
-    const upperRef = findNonAbnormalByFloorNo(group, floorNo + 1, b.rowId);
+    const cluster = clusterByFootprint(group).find((parts) =>
+      parts.some((part) => part.rowId === b.rowId),
+    ) ?? [b];
+    const lowerRef = findNonAbnormalByFloorNo(group, floorNo - 1, b.rowId, cluster);
+    const upperRef = findNonAbnormalByFloorNo(group, floorNo + 1, b.rowId, cluster);
 
     if (!lowerRef && !upperRef) {
       skippedCount++;
@@ -1432,12 +1465,17 @@ export function applyAdjacentFloorHorizontalAlignment(
   let skippedCount = 0;
 
   for (const group of byBuildingNo.values()) {
-    const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
+    for (const cluster of clusterByFootprint(group)) {
+      const sorted = [...cluster].sort((a, b) => compareFloors(a.floor, b.floor));
 
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const lower = sorted[i]!;
-      const upper = sorted[i + 1]!;
-      const lowerBounds = getHeightBounds(lower);
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const lower = sorted[i]!;
+        const upper = sorted[i + 1]!;
+        if (lower.floor?.trim().toLowerCase() === upper.floor?.trim().toLowerCase()) {
+          continue;
+        }
+
+        const lowerBounds = getHeightBounds(lower);
       const upperBounds = getHeightBounds(upper);
       if (!lowerBounds || !upperBounds) continue;
 
@@ -1481,6 +1519,7 @@ export function applyAdjacentFloorHorizontalAlignment(
         target.fixMessages.push(message);
       }
       fixedCount++;
+      }
     }
   }
 
@@ -1544,7 +1583,13 @@ export function shiftBuildingZ(building: BuildingPart, dZ: number): void {
 function getOverlapAdjacentPairs(sorted: BuildingPart[]): Array<[number, number]> {
   const pairs: Array<[number, number]> = [];
   for (let i = 0; i < sorted.length - 1; i++) {
-    const lowerBounds = getHeightBounds(sorted[i]!);
+    const lower = sorted[i]!;
+    const upper = sorted[i + 1]!;
+    if (lower.floor?.trim().toLowerCase() === upper.floor?.trim().toLowerCase()) {
+      continue;
+    }
+
+    const lowerBounds = getHeightBounds(lower);
     const upperBounds = getHeightBounds(sorted[i + 1]!);
     if (!lowerBounds || !upperBounds) continue;
 
@@ -1563,6 +1608,48 @@ function getIndicesInvolvedInOverlap(pairs: Array<[number, number]>): Set<number
     indices.add(upperIdx);
   }
   return indices;
+}
+
+/** 整棟 regular 樓層索引（由低到高） */
+function getRegularIndicesInBuilding(sorted: BuildingPart[]): number[] {
+  return sorted
+    .map((building, index) => ({ building, index }))
+    .filter(({ building }) => parseFloorSortKey(building.floor).category === 'regular')
+    .map(({ index }) => index);
+}
+
+/**
+ * 整棟底部錨點：未勾選的最低 regular → 最低 regular → 排序後最低樓層
+ * （等同 pickVerticalAnchorIndex，供雙方案評分使用）
+ */
+function pickBuildingBottomAnchorIndex(
+  sorted: BuildingPart[],
+  selectedRowIds: Set<string>,
+): number | null {
+  return pickVerticalAnchorIndex(sorted, selectedRowIds);
+}
+
+/**
+ * 整棟頂部錨點：未勾選的最高 regular → 最高 regular → 排序後最高樓層
+ */
+function pickBuildingTopAnchorIndex(
+  sorted: BuildingPart[],
+  selectedRowIds: Set<string>,
+): number | null {
+  if (sorted.length === 0) return null;
+
+  const regularIndices = getRegularIndicesInBuilding(sorted);
+  const unselectedRegular = regularIndices.filter(
+    (index) => !isSelectedForRepair(sorted[index]!, selectedRowIds),
+  );
+  if (unselectedRegular.length > 0) {
+    return unselectedRegular[unselectedRegular.length - 1]!;
+  }
+  if (regularIndices.length > 0) {
+    return regularIndices[regularIndices.length - 1]!;
+  }
+
+  return sorted.length - 1;
 }
 
 function planVerticalRestack(
@@ -1601,8 +1688,105 @@ function planVerticalRestack(
   return targets;
 }
 
+type RestackPlanScore = {
+  upward: number;
+  absTotal: number;
+};
+
 /**
- * 相鄰重疊對的位移方向：雙選時取最小位移，同距離優先下移
+ * 評估重堆疊方案：計入整棟會實際移動的樓層（錨點除外）
+ */
+function scoreRestackPlan(
+  sorted: BuildingPart[],
+  targets: Map<number, { minZ: number; maxZ: number }>,
+  anchorIdx: number,
+): RestackPlanScore {
+  let upward = 0;
+  let absTotal = 0;
+
+  for (let idx = 0; idx < sorted.length; idx++) {
+    if (idx === anchorIdx) continue;
+
+    const currentBounds = getHeightBounds(sorted[idx]!);
+    const targetBounds = targets.get(idx);
+    if (!currentBounds || !targetBounds) continue;
+
+    const dZ = targetBounds.minZ - currentBounds.minZ;
+    if (Math.abs(dZ) <= getFloorGapTolerance()) continue;
+
+    upward += Math.max(0, dZ);
+    absTotal += Math.abs(dZ);
+  }
+
+  return { upward, absTotal };
+}
+
+type ChosenRestackPlan = {
+  targets: Map<number, { minZ: number; maxZ: number }>;
+  anchorIdx: number;
+  preferSettleDown: boolean;
+};
+
+/**
+ * 同時評估上堆（整棟底錨）與下沉（整棟頂錨）方案，優先選上移量較小且通過物理把關者
+ */
+function chooseVerticalRestackPlan(
+  sorted: BuildingPart[],
+  selectedRowIds: Set<string>,
+  originalBounds: Map<number, { minZ: number; maxZ: number }>,
+  physicsContext: PhysicalRepairContext,
+): ChosenRestackPlan | null {
+  const bottomAnchorIdx = pickBuildingBottomAnchorIndex(sorted, selectedRowIds);
+  const topAnchorIdx = pickBuildingTopAnchorIndex(sorted, selectedRowIds);
+  if (bottomAnchorIdx === null || topAnchorIdx === null) return null;
+
+  const bottomTargets = planVerticalRestack(sorted, bottomAnchorIdx);
+  const topTargets = planVerticalRestack(sorted, topAnchorIdx);
+  if (bottomTargets.size === 0 && topTargets.size === 0) return null;
+
+  const candidates: ChosenRestackPlan[] = [];
+
+  if (bottomTargets.size > 0) {
+    const validation = validateRestackPlan(sorted, bottomTargets, originalBounds, physicsContext);
+    if (validation.ok) {
+      candidates.push({
+        targets: bottomTargets,
+        anchorIdx: bottomAnchorIdx,
+        preferSettleDown: false,
+      });
+    }
+  }
+
+  if (topTargets.size > 0) {
+    const validation = validateRestackPlan(sorted, topTargets, originalBounds, physicsContext);
+    if (validation.ok) {
+      candidates.push({
+        targets: topTargets,
+        anchorIdx: topAnchorIdx,
+        preferSettleDown: true,
+      });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!;
+
+  const bottomPlan = candidates.find((c) => !c.preferSettleDown);
+  const topPlan = candidates.find((c) => c.preferSettleDown);
+  if (!bottomPlan || !topPlan) return candidates[0]!;
+
+  const bottomScore = scoreRestackPlan(sorted, bottomPlan.targets, bottomPlan.anchorIdx);
+  const topScore = scoreRestackPlan(sorted, topPlan.targets, topPlan.anchorIdx);
+
+  if (topScore.upward < bottomScore.upward) return topPlan;
+  if (bottomScore.upward < topScore.upward) return bottomPlan;
+  if (topScore.absTotal < bottomScore.absTotal) return topPlan;
+  if (bottomScore.absTotal < topScore.absTotal) return bottomPlan;
+  return topPlan;
+}
+
+/**
+ * 相鄰重疊對的位移方向：任一端已勾選即可修正；雙選或兩端皆可動時取最小位移，同距離優先下移
  */
 function resolveOverlapPairDisplacement(
   lowerBounds: { minZ: number; maxZ: number },
@@ -1610,32 +1794,27 @@ function resolveOverlapPairDisplacement(
   upperSelected: boolean,
   lowerSelected: boolean,
 ): { target: 'upper' | 'lower'; dZ: number } | null {
+  if (!upperSelected && !lowerSelected) return null;
+
   const dZUp = lowerBounds.maxZ - upperBounds.minZ;
   const dZDown = upperBounds.minZ - lowerBounds.maxZ;
 
-  if (upperSelected && lowerSelected) {
-    if (Math.abs(dZUp) < Math.abs(dZDown)) {
-      return { target: 'upper', dZ: dZUp };
-    }
-    if (Math.abs(dZDown) < Math.abs(dZUp)) {
-      return { target: 'lower', dZ: dZDown };
-    }
-    return { target: 'lower', dZ: dZDown };
-  }
-
-  if (upperSelected) {
+  // 任一端已勾選即可移動任一端（維持對內連續）；優先較小位移，同分下移
+  if (Math.abs(dZUp) < Math.abs(dZDown)) {
     return { target: 'upper', dZ: dZUp };
   }
-  if (lowerSelected) {
+  if (Math.abs(dZDown) < Math.abs(dZUp)) {
     return { target: 'lower', dZ: dZDown };
   }
-  return null;
+  return { target: 'lower', dZ: dZDown };
 }
 
 function applyOverlapPairFallback(
   sorted: BuildingPart[],
   pairs: Array<[number, number]>,
   selectedRowIds: Set<string>,
+  originalBounds: Map<number, { minZ: number; maxZ: number }>,
+  physicsContext: PhysicalRepairContext,
 ): { fixedCount: number; skippedCount: number } {
   let fixedCount = 0;
   let skippedCount = 0;
@@ -1649,6 +1828,11 @@ function applyOverlapPairFallback(
 
     const upperSelected = isSelectedForRepair(upper, selectedRowIds);
     const lowerSelected = isSelectedForRepair(lower, selectedRowIds);
+    if (!upperSelected && !lowerSelected) {
+      skippedCount++;
+      continue;
+    }
+
     const displacement = resolveOverlapPairDisplacement(
       lowerBounds,
       upperBounds,
@@ -1660,9 +1844,18 @@ function applyOverlapPairFallback(
       continue;
     }
 
+    const targetIdx = displacement.target === 'upper' ? upperIdx : lowerIdx;
     const target = displacement.target === 'upper' ? upper : lower;
     const neighbor = displacement.target === 'upper' ? lower : upper;
     if (Math.abs(displacement.dZ) <= getFloorGapTolerance()) continue;
+
+    const projected = buildProjectedBounds(sorted, getHeightBounds);
+    const shifted = projectSingleFloorShift(projected, targetIdx, displacement.dZ);
+    const validation = validateRestackPlan(sorted, shifted, originalBounds, physicsContext);
+    if (!validation.ok) {
+      skippedCount++;
+      continue;
+    }
 
     shiftBuildingZ(target, displacement.dZ);
     target.isFixed = true;
@@ -1682,14 +1875,21 @@ function applyOverlapPairFallback(
 //#region ◆垂直重疊修正 [applyVerticalOverlapRepair]
 /**
  * 垂直重疊修正
- * 以建號內錨點樓層為基準規劃整棟重堆疊，僅平移已勾選異常樓層，避免逐對上移造成整棟上浮
+ * 建號內若有勾選的重疊樓層，則對整棟評估上堆／下沉方案並連續重堆疊全部樓層，
+ * 避免只移部分樓層造成建物破碎。
  * @param buildings 原始建物清單
  * @param selectedRowIds 使用者勾選的 rowId 集合
  */
 export function applyVerticalOverlapRepair(
   buildings: BuildingPart[],
   selectedRowIds: Set<string>,
-): { buildings: BuildingPart[]; fixedCount: number; skippedCount: number } {
+  groundZByBuildingNo?: Record<string, number>,
+): {
+  buildings: BuildingPart[];
+  fixedCount: number;
+  skippedCount: number;
+  physicsRejectedCount: number;
+} {
   const result = buildings.map((b) => ({
     ...b,
     coordinates: cloneCoordinates(b.coordinates ?? []),
@@ -1706,56 +1906,94 @@ export function applyVerticalOverlapRepair(
 
   let fixedCount = 0;
   let skippedCount = 0;
+  let physicsRejectedCount = 0;
 
-  for (const group of byBuildingNo.values()) {
-    const sorted = [...group].sort((a, b) => compareFloors(a.floor, b.floor));
-    const overlapPairs = getOverlapAdjacentPairs(sorted);
-    if (overlapPairs.length === 0) continue;
+  for (const [buildingNo, group] of byBuildingNo.entries()) {
+    const clusters = clusterByFootprint(group);
+    for (const cluster of clusters) {
+      const sorted = [...cluster].sort((a, b) => compareFloors(a.floor, b.floor));
+      const overlapPairs = getOverlapAdjacentPairs(sorted);
+      if (overlapPairs.length === 0) continue;
 
-    const involvedIndices = getIndicesInvolvedInOverlap(overlapPairs);
-    const anchorIdx = pickVerticalAnchorIndex(sorted, selectedRowIds);
-    if (anchorIdx === null) continue;
-
-    const targets = planVerticalRestack(sorted, anchorIdx);
-    if (targets.size === 0) {
-      const fallback = applyOverlapPairFallback(sorted, overlapPairs, selectedRowIds);
-      fixedCount += fallback.fixedCount;
-      skippedCount += fallback.skippedCount;
-      continue;
-    }
-
-    const anchorFloor = sorted[anchorIdx]!.floor;
-    for (const idx of involvedIndices) {
-      if (idx === anchorIdx) continue;
-
-      const building = sorted[idx]!;
-      if (!isSelectedForRepair(building, selectedRowIds)) {
-        skippedCount++;
+      const involvedIndices = getIndicesInvolvedInOverlap(overlapPairs);
+      const hasSelectedOverlap = [...involvedIndices].some((idx) =>
+        isSelectedForRepair(sorted[idx]!, selectedRowIds),
+      );
+      if (!hasSelectedOverlap) {
+        skippedCount += involvedIndices.size;
         continue;
       }
 
-      const currentBounds = getHeightBounds(building);
-      const targetBounds = targets.get(idx);
-      if (!currentBounds || !targetBounds) {
-        skippedCount++;
+      const originalBounds = snapshotOriginalBounds(sorted, getHeightBounds);
+      const groundZ = groundZByBuildingNo?.[buildingNo];
+      const physicsContext: PhysicalRepairContext = {
+        groundZ,
+        checkUnderground: groundZ != null && Number.isFinite(groundZ),
+      };
+
+      const chosen = chooseVerticalRestackPlan(
+        sorted,
+        selectedRowIds,
+        originalBounds,
+        physicsContext,
+      );
+
+      if (!chosen || chosen.targets.size === 0) {
+        const fallback = applyOverlapPairFallback(
+          sorted,
+          overlapPairs,
+          selectedRowIds,
+          originalBounds,
+          physicsContext,
+        );
+        fixedCount += fallback.fixedCount;
+        skippedCount += fallback.skippedCount;
+        if (fallback.fixedCount === 0) {
+          physicsRejectedCount++;
+        }
         continue;
       }
 
-      const dZ = targetBounds.minZ - currentBounds.minZ;
-      if (Math.abs(dZ) <= getFloorGapTolerance()) continue;
-
-      shiftBuildingZ(building, dZ);
-      building.isFixed = true;
-      const direction = dZ > 0 ? '上移' : '下移';
-      if (!building.fixMessages.some((m) => m.startsWith('垂直重疊修補'))) {
-        building.fixMessages.push(`垂直重疊修補：已${direction}對齊錨點樓層 ${anchorFloor}`);
+      const preApplyValidation = validateRestackPlan(
+        sorted,
+        chosen.targets,
+        originalBounds,
+        physicsContext,
+      );
+      if (!preApplyValidation.ok) {
+        physicsRejectedCount++;
+        continue;
       }
-      fixedCount++;
+
+      const { targets, anchorIdx } = chosen;
+      const anchorFloor = sorted[anchorIdx]!.floor;
+      for (let idx = 0; idx < sorted.length; idx++) {
+        if (idx === anchorIdx) continue;
+
+        const building = sorted[idx]!;
+        const currentBounds = getHeightBounds(building);
+        const targetBounds = targets.get(idx);
+        if (!currentBounds || !targetBounds) {
+          skippedCount++;
+          continue;
+        }
+
+        const dZ = targetBounds.minZ - currentBounds.minZ;
+        if (Math.abs(dZ) <= getFloorGapTolerance()) continue;
+
+        shiftBuildingZ(building, dZ);
+        building.isFixed = true;
+        const direction = dZ > 0 ? '上移' : '下移';
+        if (!building.fixMessages.some((m) => m.startsWith('垂直重疊修補'))) {
+          building.fixMessages.push(`垂直重疊修補：已${direction}對齊錨點樓層 ${anchorFloor}`);
+        }
+        fixedCount++;
+      }
     }
   }
 
   clearResolvedVerticalErrors(result);
-  return { buildings: result, fixedCount, skippedCount };
+  return { buildings: result, fixedCount, skippedCount, physicsRejectedCount };
 }
 //#endregion
 
@@ -1777,6 +2015,7 @@ export function applyDisplacementRepair(
   adjacentFloorHorizontalFixedCount: number; // 相鄰樓層水平對齊：成功對齊的樓層筆數
   verticalFixedCount: number;        // 垂直位移修正：成功對齊的樓層筆數
   verticalOverlapFixedCount: number; // 垂直重疊修正：成功對齊的樓層筆數
+  physicsRejectedCount: number;      // 垂直重疊：物理把關跳過的建號數
 } {
   // 如果沒有選擇任何修正選項，則直接返回原始建物清單
   if (
@@ -1793,6 +2032,7 @@ export function applyDisplacementRepair(
       adjacentFloorHorizontalFixedCount: 0,
       verticalFixedCount: 0,
       verticalOverlapFixedCount: 0,
+      physicsRejectedCount: 0,
     };
   }
 
@@ -1801,6 +2041,7 @@ export function applyDisplacementRepair(
   let adjacentFloorHorizontalFixedCount = 0; // 相鄰樓層水平對齊：成功對齊的樓層筆數
   let verticalFixedCount = 0;        // 垂直位移修正：成功對齊的樓層筆數
   let verticalOverlapFixedCount = 0; // 垂直重疊修正：成功對齊的樓層筆數
+  let physicsRejectedCount = 0;      // 垂直重疊：物理把關跳過的建號數
   let skippedCount = 0;              // 無法對齊而跳過的筆數
 
   // 水平位移修正
@@ -1821,10 +2062,15 @@ export function applyDisplacementRepair(
 
   // 垂直重疊修正（Z 軸）
   if (options.verticalOverlap) {
-    const overlapResult = applyVerticalOverlapRepair(current, selectedRowIds);
+    const overlapResult = applyVerticalOverlapRepair(
+      current,
+      selectedRowIds,
+      options.groundZByBuildingNo,
+    );
     current = overlapResult.buildings;
     verticalOverlapFixedCount = overlapResult.fixedCount;
     skippedCount += overlapResult.skippedCount;
+    physicsRejectedCount = overlapResult.physicsRejectedCount;
   }
 
   // 垂直位移修正
@@ -1849,6 +2095,7 @@ export function applyDisplacementRepair(
     adjacentFloorHorizontalFixedCount,
     verticalFixedCount,
     verticalOverlapFixedCount,
+    physicsRejectedCount,
   };
 }
 //#endregion
@@ -1926,11 +2173,13 @@ export function applyBuildingRepair(
     adjacentFloorHorizontalFixedCount,
     verticalFixedCount,
     verticalOverlapFixedCount,
+    physicsRejectedCount,
   } = applyDisplacementRepair(buildings, selectedRowIds, {
     horizontal,
     vertical,
     adjacentFloorHorizontal,
     verticalOverlap,
+    groundZByBuildingNo: request.groundZByBuildingNo,
   });
 
   const parts: string[] = [];
@@ -1946,6 +2195,9 @@ export function applyBuildingRepair(
   if (vertical) {
     parts.push(`【垂直位移】修正 ${verticalFixedCount} 筆樓層`);
   }
+  if (physicsRejectedCount > 0) {
+    parts.push(`物理把關跳過 ${physicsRejectedCount} 棟（穿地／位移過大／層間不連續）`);
+  }
   if (skippedCount > 0) {
     parts.push(`跳過 ${skippedCount} 筆無法對齊的樓層`);
   }
@@ -1959,6 +2211,7 @@ export function applyBuildingRepair(
     fixedCount,
     skippedCount,
     skippedGaps: 0,
+    physicsRejectedCount,
     summary: parts.join('<br>'),
   };
 }

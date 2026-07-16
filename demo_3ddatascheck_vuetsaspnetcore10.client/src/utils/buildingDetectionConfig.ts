@@ -9,6 +9,8 @@ export interface BuildingDetectionConfig {
   maxFloorGap: number;
   minFloorHeight: number;
   maxFloorHeight: number;
+  maxVerticalShiftMeters: number;
+  undergroundTolerance: number;
 }
 
 const DEFAULT_CONFIG: BuildingDetectionConfig = {
@@ -17,6 +19,8 @@ const DEFAULT_CONFIG: BuildingDetectionConfig = {
   maxFloorGap: 3.0,
   minFloorHeight: 2.0,
   maxFloorHeight: 8.0,
+  maxVerticalShiftMeters: 20.0,
+  undergroundTolerance: 0.5,
 };
 
 let cachedConfig: BuildingDetectionConfig = { ...DEFAULT_CONFIG };
@@ -53,4 +57,12 @@ export function getMinFloorHeight(): number {
 
 export function getMaxFloorHeight(): number {
   return cachedConfig.maxFloorHeight;
+}
+
+export function getMaxVerticalShiftMeters(): number {
+  return cachedConfig.maxVerticalShiftMeters;
+}
+
+export function getUndergroundTolerance(): number {
+  return cachedConfig.undergroundTolerance;
 }

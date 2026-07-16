@@ -119,6 +119,8 @@ CityGML / 地政 XML 路徑另外有以下相容規則：
 | `GroundFloorBottomThreshold` | `5.0` m | 一般 1 樓底部離地容許上限（疑似浮空） |
 | `MaxFloorGap` | `3.0` m | 相鄰樓層垂直斷層落差上限 |
 | `FloorGapTolerance` | `0.5` m | 相鄰樓層垂直重疊容許量 |
+| `MaxVerticalShiftMeters` | `20.0` m | 單次垂直重疊修正最大位移（物理把關） |
+| `UndergroundTolerance` | `0.5` m | regular 樓層底部可略低於地形（物理把關） |
 
 - `DetectSinglePartAbnormal()`
   - 樓層高度低於 `MinFloorHeight`
@@ -190,7 +192,8 @@ CityGML / 地政 XML 路徑另外有以下相容規則：
 - `缺漏樓層補齊：已補齊缺漏樓層 XXX`／`已補垂直空缺樓層 PATCH_Vxx`
 - `位移修補：已水平對齊參考樓層`
 - `相鄰水平修補：已水平對齊下層`
-- `垂直重疊修補：已上移對齊下層`
+- `垂直重疊修補：已下移對齊錨點樓層 XXX`／`已上移對齊錨點樓層 XXX`／`已上移對齊下層`
+
 - `位移修補：已垂直對齊鄰層`
 - `地形貼地修補`（位移模式勾選地形貼地時）
 
@@ -369,11 +372,21 @@ flowchart TD
 
 建議以資料可信度為優先時，分步勾選並檢視每步結果；若懷疑平面偏移，先做水平或相鄰樓層水平對齊，再視需要做垂直重疊或垂直修正。
 
+### 6.2.1 Footprint 子棟分群（同建號多構件）
+
+同建號內若含**多個獨立 footprint**（例如兩個不同位置的 `001`、多個分散的 `R01`、或主棟與附屬物），後端檢測與前端修復皆會先依水平 footprint 重疊關聯分子棟（`BuildingFootprintClusterer` / `buildingFootprintCluster.ts`），再於各子棟內進行垂直連續性判斷與修復。
+
+分群規則（前後端對齊）：
+
+- 兩筆建物 footprint 的 bbox 相交，且交集面積 ÷ 較小 footprint 面積 ≥ `0.2` → 視為同一子棟
+- **同樓層標籤**（如兩筆 `001`）即使 Z 相同，也不做「上下層」垂直重疊比較
+- 垂直重疊修正、水平參考樓層、缺樓層號檢測，皆在子棟範圍內運作，避免把整個建號串成單一 Z 軸柱體
+
 ### 6.3 水平修正
 水平修正由 `applyHorizontalDisplacementRepair()` 執行，邏輯如下：
 
 1. 只處理 `isAbnormal = true` 且被選取的樓層
-2. 在同一 `buildingNo` 中尋找非異常樓層作為參考樓層
+2. 在同一 `buildingNo`、**同一 footprint 子棟**中尋找非異常樓層作為參考樓層
 3. 以目標樓層與參考樓層的質心差，計算平移量
 4. 若平移距離大於 `100m`，則忽略該參考樓層
 5. 計算平移後 footprint 與參考樓層 footprint 的重疊比例
@@ -407,22 +420,25 @@ flowchart TD
 本步驟不會清除「垂直重疊」錯誤訊息。
 
 ### 6.5 垂直重疊修正
-垂直重疊修正由 `applyVerticalOverlapRepair()` 執行，目標是解決相鄰樓層在 Z 軸上的重疊，並避免逐對上移造成整棟建物上浮。
+垂直重疊修正由 `applyVerticalOverlapRepair()` 執行，目標是解決相鄰樓層在 Z 軸上的重疊，並以**整棟連續重堆疊**避免只移部分樓層造成建物破碎；同時優先「下沉重堆疊」減少上浮。
 
 處理方式如下：
 
-1. 依建號分組並按樓層排序
-2. 檢查是否存在 `gap < -FloorGapTolerance` 的相鄰對（閾值與後端 `BuildingAbnormalDetection.FloorGapTolerance` 同步，預設 `-0.5m`）；若無重疊則跳過該建號
-3. 選擇錨點樓層（優先：未勾選的最低 regular 樓層 → 最低 regular 樓層 → 排序後最低樓層）；錨點不移動
-4. 自錨點向上／向下規劃各層目標 `minZ`／`maxZ`（維持原樓層厚度，僅平移）
-5. 僅對重疊區段內、已勾選且為異常的樓層套用位移
-6. 若錨點規劃失敗，退回逐對修正：雙選時取最小位移方向，同距離優先下移
+1. 依建號分組，再依 footprint 分子棟；各子棟內按樓層排序
+2. 檢查是否存在 `gap < -FloorGapTolerance` 的相鄰對（閾值與後端 `BuildingAbnormalDetection.FloorGapTolerance` 同步，預設 `-0.5m`）；**同樓層標籤的相鄰對跳過**；若無重疊則跳過該子棟
+3. 若該子棟重疊涉及樓層中**至少有一筆已勾選**，才處理該子棟；否則跳過
+4. 對整棟同時規劃兩種目標高度：
+   - **上堆方案**：以整棟底部錨點為底（優先：未勾選的最低 regular → 最低 regular → 排序後最低樓層），向上／向下連續堆疊
+   - **下沉方案**：以整棟頂部錨點為頂（優先：未勾選的最高 regular → 最高 regular → 排序後最高樓層），向上／向下連續堆疊
+5. 評分後擇一（計入整棟會移動的樓層）：優先最小化上移量 `sum(max(0, dZ))`，其次最小化 `sum(|dZ|)`，再同分選下沉方案
+6. 對該建號**每一層**套用目標 Z（錨點不移動）；未勾選樓層若需位移也一併移動，以維持連續堆疊
+7. 若兩方案皆無法規劃，退回逐對修正：該對只要有一端已勾選即可修正，並允許移動未勾選的一端；取最小位移，同距離優先下移
 
 修復成功後會：
 
-- 調整已勾選樓層的 Z 值（錨點樓層保持不動）
-- 設定 `isFixed = true`
-- 寫入 `垂直重疊修補` 訊息（含錨點樓層或相鄰樓層說明）
+- 調整整棟樓層的 Z 值（錨點樓層保持不動）
+- 設定 `isFixed = true`（含為維持連續而被移動的未勾選樓層）
+- 寫入 `垂直重疊修補` 訊息（含上移／下移對齊錨點樓層，或逐對時的相鄰樓層說明）
 
 之後會呼叫 `clearResolvedVerticalErrors()`，重新檢查是否可以移除已解決的垂直異常訊息。
 
@@ -433,7 +449,28 @@ flowchart TD
 2. 若 `anchor.minZ - groundZ > GroundFloorBottomThreshold`，將同建號全部樓層統一下移 `groundZ - anchor.minZ`
 3. 寫入 `地形貼地修補` 訊息
 
-建議流程：先執行垂直重疊修正檢視樓層堆疊，若 1F 仍離地過高再勾選地形貼地。
+UI 上勾選「垂直重疊修正」時會自動勾選「地形貼地」（可手動取消）。建議保留兩者一併執行，讓下沉重堆疊後若 1F 仍離地，再由地形貼地整棟下移。
+
+#### 6.5.2 物理把關（套用前驗證）
+
+垂直重疊修正套用前會由 [`repairPhysicsGuard.ts`](demo_3ddatascheck_vuetsaspnetcore10.client/src/utils/repairPhysicsGuard.ts) 驗證規劃結果；**不合格則整棟跳過**，不寫入 `isFixed`、不修改幾何。
+
+驗證規則（閾值與 `BuildingAbnormalDetection` 同步，並含下列新增項）：
+
+| 規則 | 說明 |
+| --- | --- |
+| 相鄰連續 | 相鄰樓層 `gap` 須在 `[-FloorGapTolerance, MaxFloorGap]` |
+| 層高合理 | 每層高度在 `[MinFloorHeight, MaxFloorHeight]` |
+| 堆疊順序 | 樓層由低到高 `minZ` 嚴格遞增 |
+| 單次位移上限 | 任一楼層 `\|dZ\|` ≤ `MaxVerticalShiftMeters`（預設 20m） |
+| 禁止穿地 | 最低 regular 樓層 `minZ` ≥ `groundZ - UndergroundTolerance`（預設 0.5m） |
+
+流程：
+
+1. `BuildingDemo.vue` 在垂直重疊修正前，以錨點樓層質心取樣地形，組成 `groundZByBuildingNo` 傳入修復請求
+2. `chooseVerticalRestackPlan` 僅在通過物理把關的上堆／下沉方案中擇一
+3. 兩方案皆不合格時嘗試逐對 fallback（每對修正前亦驗證）；仍無法修正則累計 `physicsRejectedCount`
+4. 修復摘要會顯示 `物理把關跳過 N 棟`；若未取得地形則註明「未取得地形，未檢查穿地」
 
 ### 6.6 垂直修正
 垂直修正由 `applyVerticalDisplacementRepair()` 執行，目標是讓異常樓層沿 Z 軸對齊相鄰的正常樓層。

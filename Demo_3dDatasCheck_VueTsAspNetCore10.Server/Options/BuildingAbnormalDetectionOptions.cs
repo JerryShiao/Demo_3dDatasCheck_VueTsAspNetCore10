@@ -31,5 +31,15 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Options
         /// 最大合理層高（公尺）
         /// </summary>
         public double MaxFloorHeight { get; set; } = 8.0;
+
+        /// <summary>
+        /// 單次垂直重疊修正允許的最大位移（公尺）
+        /// </summary>
+        public double MaxVerticalShiftMeters { get; set; } = 20.0;
+
+        /// <summary>
+        /// regular 樓層底部可略低於地形的容許量（公尺）
+        /// </summary>
+        public double UndergroundTolerance { get; set; } = 0.5;
     }
 }

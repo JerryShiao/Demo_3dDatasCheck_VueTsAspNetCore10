@@ -814,6 +814,75 @@ public class BuildingProcessorServiceTests
         Assert.DoesNotContain(basement.ErrorMessages, m => m.Contains("樓層缺漏"));
     }
 
+    [Fact]
+    public void ProcessJson_SeparateFootprintClusters_SameBuildingNo_DoNotMarkCrossClusterOverlap()
+    {
+        var service = CreateService();
+        // 同建號兩個獨立 001（XY 分離）+ 主棟 002，不應把不同子棟的 001 當成垂直重疊
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "MULTI001",
+                "層次": "001",
+                "boundedBy": "[[[121.0,25.0,0],[121.001,25.0,0],[121.001,25.001,3],[121.0,25.001,3],[121.0,25.0,0]]]"
+              },
+              {
+                "MID": 2,
+                "OID": 2,
+                "建號母號": "MULTI001",
+                "層次": "001",
+                "boundedBy": "[[[121.05,25.0,0],[121.051,25.0,0],[121.051,25.001,3],[121.05,25.001,3],[121.05,25.0,0]]]"
+              },
+              {
+                "MID": 3,
+                "OID": 3,
+                "建號母號": "MULTI001",
+                "層次": "002",
+                "boundedBy": "[[[121.0,25.0,3],[121.001,25.0,3],[121.001,25.001,6],[121.0,25.001,6],[121.0,25.0,3]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        Assert.Equal(3, result.Count);
+        var detached001 = Assert.Single(result, b => b.Mid == "2");
+        Assert.DoesNotContain(detached001.ErrorMessages, m => m.Contains("垂直重疊"));
+        Assert.False(detached001.IsAbnormal);
+    }
+
+    [Fact]
+    public void ProcessJson_SameFloorOverlappingFootprints_DoNotMarkVerticalOverlap()
+    {
+        var service = CreateService();
+        var json = """
+            [
+              {
+                "MID": 1,
+                "OID": 1,
+                "建號母號": "ANN01",
+                "層次": "001",
+                "boundedBy": "[[[121.0,25.0,0],[121.001,25.0,0],[121.001,25.001,3],[121.0,25.001,3],[121.0,25.0,0]]]"
+              },
+              {
+                "MID": 2,
+                "OID": 2,
+                "建號母號": "ANN01",
+                "層次": "001",
+                "boundedBy": "[[[121.0005,25.0005,0],[121.0008,25.0005,0],[121.0008,25.0008,3],[121.0005,25.0008,3],[121.0005,25.0005,0]]]"
+              }
+            ]
+            """;
+
+        var result = service.ProcessJson(json);
+
+        Assert.Equal(2, result.Count);
+        Assert.All(result, b => Assert.DoesNotContain(b.ErrorMessages, m => m.Contains("垂直重疊")));
+        Assert.All(result, b => Assert.False(b.IsAbnormal));
+    }
+
     private static BuildingProcessorService CreateService(IXmlImportPreprocessor? preprocessor = null)
     {
         return new BuildingProcessorService(

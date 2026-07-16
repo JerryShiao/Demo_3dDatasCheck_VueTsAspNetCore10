@@ -57,7 +57,7 @@
             </label>
           </div>
           <p v-if="repairMode === 'displacement'" class="displacement-hint">
-            垂直重疊修正以最低 regular 樓層（如 1F）為錨點重堆疊，僅移動已勾選樓層，避免整棟上浮。建議先執行垂直重疊修正並檢視結果；若 1F 仍離地過高，再勾選「地形貼地」將整棟下移貼齊地形。
+            垂直重疊修正會對同建號整棟連續重堆疊（勾選任一重疊樓層即處理該建號全部樓層），並優先下沉以減少上浮。不符合物理規則（穿地、位移過大、層間不連續）的建號將跳過並顯示於摘要。勾選時會一併勾選「地形貼地」（可手動取消）；若 1F 仍離地過高，請保留地形貼地將整棟下移貼齊地形。
           </p>
 
           <!--缺漏樓層補齊專用：補齊策略與缺漏層數上限（僅 gapRepair 模式顯示）-->
@@ -269,6 +269,13 @@
   watch(abnormalBuildings, () => {
     if (props.modelValue) {
       resetSelection();
+    }
+  });
+
+  // 勾選垂直重疊修正時自動勾選地形貼地（可再手動取消）
+  watch(verticalOverlapCorrection, (enabled) => {
+    if (enabled) {
+      terrainGrounding.value = true;
     }
   });
 

@@ -805,34 +805,40 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 DetectSinglePartAbnormal(dto); 
             }
 
-            // 依 BuildingNo 分組
+            // 依 BuildingNo 分組，再依 footprint 分子棟後做跨樓層檢測
             var groups = buildings
                 .Where(b => b.BuildingNo != "UNKNOWN_NO" && b.MinHeight.HasValue && b.MaxHeight.HasValue)
                 .GroupBy(b => b.BuildingNo);
 
-            // 對每個建物群組進行跨樓層檢測
             foreach (var group in groups)
             {
-                // 將建物群組按層次排序（支援 B1 / 001 / R01 等命名）
-                var floors = group
-                    .OrderBy(b => b.Floor, Comparer<string>.Create(GeoJsonFloorOrdering.Compare))
-                    .ToList();
-
-                // 逐層檢測相鄰樓層的高度差異
-                for (var i = 1; i < floors.Count; i++)
+                var clusters = BuildingFootprintClusterer.Cluster(group.ToList());
+                foreach (var cluster in clusters)
                 {
-                    var prev = floors[i - 1];
-                    var curr = floors[i];
-                    CompareAdjacentFloors(
-                        prev,
-                        curr,
-                        GeoJsonFloorOrdering.GetDisplayLabel(prev.Floor),
-                        GeoJsonFloorOrdering.GetDisplayLabel(curr.Floor));
+                    var floors = cluster
+                        .OrderBy(b => b.Floor, Comparer<string>.Create(GeoJsonFloorOrdering.Compare))
+                        .ThenBy(b => b.Mid, StringComparer.Ordinal)
+                        .ToList();
+
+                    for (var i = 1; i < floors.Count; i++)
+                    {
+                        var prev = floors[i - 1];
+                        var curr = floors[i];
+                        if (string.Equals(prev.Floor?.Trim(), curr.Floor?.Trim(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        CompareAdjacentFloors(
+                            prev,
+                            curr,
+                            GeoJsonFloorOrdering.GetDisplayLabel(prev.Floor),
+                            GeoJsonFloorOrdering.GetDisplayLabel(curr.Floor));
+                    }
+
+                    DetectMissingFloorNumbersForParts(cluster);
                 }
             }
-
-            // 一般地上樓層號跳號（樓層缺漏）檢測
-            DetectMissingFloorNumbers(buildings);
         }
         #endregion
 
@@ -845,88 +851,85 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
         /// 2. 相鄰現有樓層號之間有缺號 → 中間缺層異常。
         /// 僅處理 regular（如 001／1F），排除 B1、R01 等特殊樓層。
         /// </summary>
-        private void DetectMissingFloorNumbers(List<BuildingData> buildings)
+        private void DetectMissingFloorNumbersForParts(IEnumerable<BuildingData> parts)
         {
-            var groups = buildings
-                .Where(b => !string.Equals(b.BuildingNo, "UNKNOWN_NO", StringComparison.Ordinal))
-                .GroupBy(b => b.BuildingNo);
-
-            foreach (var group in groups)
+            var group = parts.ToList();
+            if (group.Count == 0)
             {
-                var regularByNumber = group
-                    .Select(b => (Building: b, Key: GeoJsonFloorOrdering.Parse(b.Floor)))
-                    .Where(x => x.Key.Category == GeoJsonFloorOrdering.FloorCategory.Regular)
-                    .GroupBy(x => x.Key.Number)
-                    .OrderBy(g => g.Key)
-                    .ToList();
+                return;
+            }
 
-                if (regularByNumber.Count == 0)
+            var regularByNumber = group
+                .Select(b => (Building: b, Key: GeoJsonFloorOrdering.Parse(b.Floor)))
+                .Where(x => x.Key.Category == GeoJsonFloorOrdering.FloorCategory.Regular)
+                .GroupBy(x => x.Key.Number)
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            if (regularByNumber.Count == 0)
+            {
+                return;
+            }
+
+            // 最低 regular > 1
+            var lowestGroup = regularByNumber[0];
+            var lowestNo = lowestGroup.Key;
+            if (lowestNo > 1)
+            {
+                var missingLabels = string.Join(
+                    "、",
+                    Enumerable.Range(1, lowestNo - 1).Select(n => $"{n:D3} 樓"));
+                var lowestLabel = GeoJsonFloorOrdering.GetDisplayLabel(lowestGroup.First().Building.Floor);
+
+                if (regularByNumber.Count == 1)
+                {
+                    var tip =
+                        $"樓層提示：未列入樓層缺漏——視覺上可能浮空或缺少較低樓層，"
+                        + $"但此建號僅含 {lowestLabel} 樓（缺少 {missingLabels}）。"
+                        + "因可能為區分所有／每層不同建號，僅提示不標異常；請與同檔其他建號一併檢視";
+                    foreach (var item in lowestGroup)
+                    {
+                        AddUniqueMessage(item.Building.FixMessages, tip);
+                    }
+                }
+                else
+                {
+                    var message =
+                        $"樓層缺漏：缺地下層／缺少 {missingLabels}（最低現有樓層為 {lowestLabel}）";
+                    foreach (var item in lowestGroup)
+                    {
+                        MarkAbnormal(item.Building, message);
+                    }
+                }
+            }
+
+            for (var i = 1; i < regularByNumber.Count; i++)
+            {
+                var lowerGroup = regularByNumber[i - 1];
+                var upperGroup = regularByNumber[i];
+                var lowerNo = lowerGroup.Key;
+                var upperNo = upperGroup.Key;
+                if (upperNo - lowerNo <= 1)
                 {
                     continue;
                 }
 
-                // 最低 regular > 1
-                var lowestGroup = regularByNumber[0];
-                var lowestNo = lowestGroup.Key;
-                if (lowestNo > 1)
-                {
-                    var missingLabels = string.Join(
-                        "、",
-                        Enumerable.Range(1, lowestNo - 1).Select(n => $"{n:D3} 樓"));
-                    var lowestLabel = GeoJsonFloorOrdering.GetDisplayLabel(lowestGroup.First().Building.Floor);
+                var missingLabels = string.Join(
+                    "、",
+                    Enumerable.Range(lowerNo + 1, upperNo - lowerNo - 1)
+                        .Select(n => $"{n:D3} 樓"));
+                var lowerLabel = GeoJsonFloorOrdering.GetDisplayLabel(lowerGroup.First().Building.Floor);
+                var upperLabel = GeoJsonFloorOrdering.GetDisplayLabel(upperGroup.First().Building.Floor);
+                var message = $"樓層缺漏：缺少 {missingLabels}（介於 {lowerLabel} 與 {upperLabel} 之間）";
 
-                    if (regularByNumber.Count == 1)
-                    {
-                        // 單層建號：僅提示，不進異常清單（可能為區分所有／每層不同建號）
-                        var tip =
-                            $"樓層提示：未列入樓層缺漏——視覺上可能浮空或缺少較低樓層，"
-                            + $"但此建號僅含 {lowestLabel} 樓（缺少 {missingLabels}）。"
-                            + "因可能為區分所有／每層不同建號，僅提示不標異常；請與同檔其他建號一併檢視";
-                        foreach (var item in lowestGroup)
-                        {
-                            AddUniqueMessage(item.Building.FixMessages, tip);
-                        }
-                    }
-                    else
-                    {
-                        var message =
-                            $"樓層缺漏：缺地下層／缺少 {missingLabels}（最低現有樓層為 {lowestLabel}）";
-                        foreach (var item in lowestGroup)
-                        {
-                            MarkAbnormal(item.Building, message);
-                        }
-                    }
+                foreach (var item in lowerGroup)
+                {
+                    MarkAbnormal(item.Building, message);
                 }
 
-                // 相鄰現有樓層號之間的中間缺號
-                for (var i = 1; i < regularByNumber.Count; i++)
+                foreach (var item in upperGroup)
                 {
-                    var lowerGroup = regularByNumber[i - 1];
-                    var upperGroup = regularByNumber[i];
-                    var lowerNo = lowerGroup.Key;
-                    var upperNo = upperGroup.Key;
-                    if (upperNo - lowerNo <= 1)
-                    {
-                        continue;
-                    }
-
-                    var missingLabels = string.Join(
-                        "、",
-                        Enumerable.Range(lowerNo + 1, upperNo - lowerNo - 1)
-                            .Select(n => $"{n:D3} 樓"));
-                    var lowerLabel = GeoJsonFloorOrdering.GetDisplayLabel(lowerGroup.First().Building.Floor);
-                    var upperLabel = GeoJsonFloorOrdering.GetDisplayLabel(upperGroup.First().Building.Floor);
-                    var message = $"樓層缺漏：缺少 {missingLabels}（介於 {lowerLabel} 與 {upperLabel} 之間）";
-
-                    foreach (var item in lowerGroup)
-                    {
-                        MarkAbnormal(item.Building, message);
-                    }
-
-                    foreach (var item in upperGroup)
-                    {
-                        MarkAbnormal(item.Building, message);
-                    }
+                    MarkAbnormal(item.Building, message);
                 }
             }
         }
