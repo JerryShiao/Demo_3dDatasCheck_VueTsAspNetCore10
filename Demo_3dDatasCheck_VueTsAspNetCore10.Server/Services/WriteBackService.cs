@@ -78,7 +78,17 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 });
             }
 
-            // 2. 更新項先 GET 備份
+            // 2. 新增項先依 MID 查詢，確認五欄位無重複
+            foreach (var item in prepared.Where(p => p.IsInsert))
+            {
+                var dupResult = await CheckDuplicateInsertAsync(baseUrl, item, cancellationToken);
+                if (dupResult != null)
+                {
+                    return dupResult.Value;
+                }
+            }
+
+            // 3. 更新項先 GET 備份
             var backups = new Dictionary<int, string>();
             foreach (var item in prepared.Where(p => !p.IsInsert))
             {
@@ -112,7 +122,7 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 }
             }
 
-            // 3. 依序寫入
+            // 4. 依序寫入
             var succeeded = new List<SucceededOp>();
             PreparedWriteItem? current = null;
             try
@@ -219,18 +229,361 @@ namespace Demo_3dDatasCheck_VueTsAspNetCore10.Server.Services
                 height = (decimal)(item.MaxHeight.Value - item.MinHeight.Value);
             }
 
+            decimal? area = item.Area;
+            if (area == null)
+            {
+                if (!TryComputeFootprintAreaSqm(item.Coordinates, out var computedArea))
+                {
+                    error = $"OID '{item.Oid}' 無法由座標計算面積";
+                    return false;
+                }
+
+                area = computedArea;
+            }
+
+            var floor = item.Floor ?? string.Empty;
+
             payload.MID = mid;
-            payload.gmlid = item.Gmlid;
+            payload.gmlid = string.IsNullOrWhiteSpace(item.Gmlid) ? "id" + floor : item.Gmlid;
             payload.建號母號 = item.BuildingNo;
             payload.建號子號 = string.IsNullOrWhiteSpace(item.BuildingSubNo) ? "000" : item.BuildingSubNo;
             payload.是否為主要建物 = string.IsNullOrWhiteSpace(item.IsMainBuilding) ? "true" : item.IsMainBuilding;
             payload.附屬建物類型 = string.IsNullOrWhiteSpace(item.AnnexType) ? "No" : item.AnnexType;
             payload.高度 = height;
-            payload.面積 = item.Area;
-            payload.層次 = item.Floor;
+            payload.面積 = area;
+            payload.層次 = floor;
             payload.boundedBy = JsonSerializer.Serialize(item.Coordinates);
 
             return true;
+        }
+
+        /// <summary>
+        /// 新增前依 MID 查詢外部 API，若五欄位皆相同則視為重複
+        /// </summary>
+        private async Task<(WriteBackResponse? Success, WriteBackErrorResponse? Error, int StatusCode)?> CheckDuplicateInsertAsync(
+            string baseUrl,
+            PreparedWriteItem item,
+            CancellationToken cancellationToken)
+        {
+            var mid = item.Payload.MID;
+            if (mid == null)
+            {
+                return (null, new WriteBackErrorResponse
+                {
+                    Message = "新增項目缺少 MID，無法做重複檢查",
+                    FailedOid = item.Source.Oid,
+                    FailedRowId = item.Source.RowId,
+                }, StatusCodes.Status400BadRequest);
+            }
+
+            try
+            {
+                var getUrl = $"{baseUrl}/?MID={mid}";
+                using var response = await _httpClient.GetAsync(getUrl, cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return (null, new WriteBackErrorResponse
+                    {
+                        Message = $"新增前重複檢查失敗（GET MID={mid}）：HTTP {(int)response.StatusCode} {body}",
+                        FailedOid = item.Source.Oid,
+                        FailedRowId = item.Source.RowId,
+                    }, StatusCodes.Status502BadGateway);
+                }
+
+                if (HasDuplicatePart(body, item.Payload))
+                {
+                    return (null, new WriteBackErrorResponse
+                    {
+                        Message = $"資料重複，無法新增：MID={mid}、建號母號={item.Payload.建號母號}、層次={item.Payload.層次}"
+                            + "（MID／建號母號／是否為主要建物／附屬建物類型／層次皆相同）",
+                        FailedOid = item.Source.Oid,
+                        FailedRowId = item.Source.RowId,
+                    }, StatusCodes.Status400BadRequest);
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Duplicate check failed for MID {Mid}", mid);
+                return (null, new WriteBackErrorResponse
+                {
+                    Message = $"新增前重複檢查失敗（GET MID={mid}）：{ex.Message}",
+                    FailedOid = item.Source.Oid,
+                    FailedRowId = item.Source.RowId,
+                }, StatusCodes.Status502BadGateway);
+            }
+        }
+
+        /// <summary>
+        /// 解析 GET ?MID= 回應，比對五欄位是否與待新增 payload 重複
+        /// </summary>
+        private static bool HasDuplicatePart(string responseBody, ConsistsOfBuildingPartPayload candidate)
+        {
+            if (string.IsNullOrWhiteSpace(responseBody))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(responseBody);
+                foreach (var element in EnumerateRecordElements(doc.RootElement))
+                {
+                    if (MatchesDuplicateKey(element, candidate))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<JsonElement> EnumerateRecordElements(JsonElement root)
+        {
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var el in root.EnumerateArray())
+                {
+                    if (el.ValueKind == JsonValueKind.Object)
+                    {
+                        yield return el;
+                    }
+                }
+
+                yield break;
+            }
+
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var wrapName in new[] { "data", "items", "results", "value" })
+                {
+                    if (root.TryGetProperty(wrapName, out var wrapped)
+                        && wrapped.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var el in wrapped.EnumerateArray())
+                        {
+                            if (el.ValueKind == JsonValueKind.Object)
+                            {
+                                yield return el;
+                            }
+                        }
+
+                        yield break;
+                    }
+                }
+
+                yield return root;
+            }
+        }
+
+        private static bool MatchesDuplicateKey(JsonElement element, ConsistsOfBuildingPartPayload candidate)
+        {
+            var mid = TryGetJsonInt(element, "MID", "mid");
+            var buildingNo = TryGetJsonString(element, "建號母號", "buildingNo", "BuildingNo");
+            var isMain = TryGetJsonString(element, "是否為主要建物", "isMainBuilding", "IsMainBuilding");
+            var annex = TryGetJsonString(element, "附屬建物類型", "annexType", "AnnexType");
+            var floor = TryGetJsonString(element, "層次", "floor", "Floor");
+
+            if (mid == null || candidate.MID == null)
+            {
+                return false;
+            }
+
+            return mid == candidate.MID
+                && string.Equals(NormalizeField(buildingNo), NormalizeField(candidate.建號母號), StringComparison.Ordinal)
+                && string.Equals(NormalizeField(isMain), NormalizeField(candidate.是否為主要建物), StringComparison.OrdinalIgnoreCase)
+                && string.Equals(NormalizeField(annex), NormalizeField(candidate.附屬建物類型), StringComparison.OrdinalIgnoreCase)
+                && string.Equals(NormalizeField(floor), NormalizeField(candidate.層次), StringComparison.Ordinal);
+        }
+
+        private static string NormalizeField(string? value)
+            => (value ?? string.Empty).Trim();
+
+        private static int? TryGetJsonInt(JsonElement element, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (!TryGetPropertyIgnoreCase(element, name, out var prop))
+                {
+                    continue;
+                }
+
+                if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt32(out var n))
+                {
+                    return n;
+                }
+
+                if (prop.ValueKind == JsonValueKind.String && int.TryParse(prop.GetString(), out var sn))
+                {
+                    return sn;
+                }
+            }
+
+            return null;
+        }
+
+        private static string? TryGetJsonString(JsonElement element, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (!TryGetPropertyIgnoreCase(element, name, out var prop))
+                {
+                    continue;
+                }
+
+                if (prop.ValueKind == JsonValueKind.String)
+                {
+                    return prop.GetString();
+                }
+
+                if (prop.ValueKind == JsonValueKind.Number || prop.ValueKind == JsonValueKind.True || prop.ValueKind == JsonValueKind.False)
+                {
+                    return prop.ToString();
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryGetPropertyIgnoreCase(JsonElement element, string name, out JsonElement property)
+        {
+            if (element.TryGetProperty(name, out property))
+            {
+                return true;
+            }
+
+            foreach (var p in element.EnumerateObject())
+            {
+                if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    property = p.Value;
+                    return true;
+                }
+            }
+
+            property = default;
+            return false;
+        }
+
+        /// <summary>
+        /// 由建物座標選 footprint 環，equirectangular 轉公尺後以 Shoelace 計算面積（m²）
+        /// </summary>
+        private static bool TryComputeFootprintAreaSqm(
+            List<List<List<double>>> coordinates,
+            out decimal areaSqm)
+        {
+            areaSqm = 0;
+            var ring = SelectFootprintRing(coordinates);
+            if (ring.Count < 3)
+            {
+                return false;
+            }
+
+            var meanLat = ring.Average(p => p.Lat);
+            var metersPerDegLat = 110540.0;
+            var metersPerDegLon = 111320.0 * Math.Cos(meanLat * Math.PI / 180.0);
+
+            var meters = new List<(double X, double Y)>(ring.Count);
+            foreach (var p in ring)
+            {
+                meters.Add((p.Lon * metersPerDegLon, p.Lat * metersPerDegLat));
+            }
+
+            var area = Math.Abs(ShoelaceArea(meters));
+            if (area <= 0 || !double.IsFinite(area))
+            {
+                return false;
+            }
+
+            areaSqm = Math.Round((decimal)area, 3, MidpointRounding.AwayFromZero);
+            return areaSqm > 0;
+        }
+
+        private static List<(double Lon, double Lat)> SelectFootprintRing(List<List<List<double>>> coordinates)
+        {
+            List<(double Lon, double Lat)> bestRing = [];
+            var bestScore = double.NegativeInfinity;
+
+            foreach (var polygon in coordinates)
+            {
+                var ring = RingTo2D(polygon);
+                if (ring.Count < 3)
+                {
+                    continue;
+                }
+
+                var planarArea = Math.Abs(ShoelaceArea(ring.Select(p => (p.Lon, p.Lat)).ToList()));
+                if (planarArea <= 0)
+                {
+                    continue;
+                }
+
+                var zs = polygon
+                    .Where(pt => pt != null && pt.Count >= 3 && double.IsFinite(pt[2]))
+                    .Select(pt => pt[2])
+                    .ToList();
+                var zSpan = zs.Count > 0 ? zs.Max() - zs.Min() : double.PositiveInfinity;
+                var score = planarArea - zSpan * 1_000_000;
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestRing = ring;
+                }
+            }
+
+            if (bestRing.Count > 0)
+            {
+                return bestRing;
+            }
+
+            return coordinates.Count > 0 ? RingTo2D(coordinates[0]) : [];
+        }
+
+        private static List<(double Lon, double Lat)> RingTo2D(List<List<double>> polygon)
+        {
+            var ring = new List<(double Lon, double Lat)>();
+            foreach (var pt in polygon)
+            {
+                if (pt == null || pt.Count < 2)
+                {
+                    continue;
+                }
+
+                if (!double.IsFinite(pt[0]) || !double.IsFinite(pt[1]))
+                {
+                    continue;
+                }
+
+                ring.Add((pt[0], pt[1]));
+            }
+
+            return ring;
+        }
+
+        private static double ShoelaceArea(IReadOnlyList<(double X, double Y)> ring)
+        {
+            if (ring.Count < 3)
+            {
+                return 0;
+            }
+
+            double area = 0;
+            for (var i = 0; i < ring.Count; i++)
+            {
+                var j = (i + 1) % ring.Count;
+                area += ring[i].X * ring[j].Y;
+                area -= ring[j].X * ring[i].Y;
+            }
+
+            return area / 2.0;
         }
 
         private static bool IsInsertOid(string? oid)
