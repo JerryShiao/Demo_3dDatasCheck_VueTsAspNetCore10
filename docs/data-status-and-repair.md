@@ -1,18 +1,22 @@
-# 資料狀態與修復開發文件
+# 資料狀態、修復與寫回開發文件
 
 ## 文件目的
-本文件整理目前專案中「資料狀態判斷」與「資料修復」的既有實作，方便開發者快速理解匯入、檢核、修復與畫面呈現之間的關係。
+本文件整理目前專案中「資料狀態判斷」、「資料修復」與「寫回外部資料庫」的既有實作，方便開發者快速理解匯入、檢核、修復、寫回與畫面呈現之間的關係。
 
 相關實作主要分布於：
 
-- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/appsettings.json`（異常檢測閾值設定）
+- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/appsettings.json`（異常檢測閾值、`ModelOfBuildingApi` 寫回 URL）
 - `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Options/BuildingAbnormalDetectionOptions.cs`
+- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Options/ModelOfBuildingApiOptions.cs`
 - `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Services/BuildingProcessorService.cs`
-- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Controllers/BuildingController.cs`（`GET /api/building/detection-settings`）
+- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Services/WriteBackService.cs`
+- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Models/WriteBackModels.cs`
+- `Demo_3dDatasCheck_VueTsAspNetCore10.Server/Controllers/BuildingController.cs`（`GET /api/building/detection-settings`、`POST /api/building/write-back`）
 - `demo_3ddatascheck_vuetsaspnetcore10.client/src/utils/buildingDetectionConfig.ts`
 - `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/BuildingCheckDialog.vue`
 - `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/BuildingDemo.vue`
 - `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/DataRepairDialog.vue`
+- `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/DataWriteBackDialog.vue`
 - `demo_3ddatascheck_vuetsaspnetcore10.client/src/utils/buildingRepair.ts`
 - `demo_3ddatascheck_vuetsaspnetcore10.client/src/types/BuildingPart.ts`
 
@@ -73,16 +77,18 @@ CityGML / 地政 XML 路徑另外有以下相容規則：
 ### 2.1 狀態來源
 畫面上顯示的 `正常`、`異常`、`錯誤`、`已修復`，是由 `demo_3ddatascheck_vuetsaspnetcore10.client/src/components/BuildingCheckDialog.vue` 的 `getBuildingCategory()` 與列表 badge 顯示邏輯決定。
 
-實際判斷順序如下：
+實際判斷順序如下（與 `BuildingCheckDialog.vue` 列表 badge 一致）：
 
 1. `isAbnormal === true` 時顯示為 `異常`
-2. 否則若 `isFixed === true` 時顯示為 `已修復`
-3. 否則若 `isValid === true` 時顯示為 `正常`
+2. 否則若 `isValid === true && isFixed === false` 時顯示為 `正常`（若 `fixMessages` 含「樓層提示」則顯示 `正常（有提示）`）
+3. 否則若 `isFixed === true` 時顯示為 `已修復`
 4. 其餘情況顯示為 `錯誤`
 
 也就是說，目前 UI 的優先序為：
 
-`異常` > `已修復` > `正常` / `錯誤`
+`異常` > `正常`（含有提示）> `已修復` > `錯誤`
+
+> 排序用的 `getBuildingCategory()` 順序為 `異常` > `錯誤` > `已修復` > `正常`，與 badge 顯示優先序不同，僅影響列表排序。
 
 ### 2.2 狀態對照表
 
@@ -181,11 +187,15 @@ CityGML / 地政 XML 路徑另外有以下相容規則：
 #### 前端互動修復
 前端在 `demo_3ddatascheck_vuetsaspnetcore10.client/src/utils/buildingRepair.ts` 中執行修復後，也會設定 `isFixed = true` 並追加 `fixMessages`，例如：
 
-- `缺漏樓層補齊：已補齊缺漏樓層`
+- `缺漏樓層補齊：已補齊缺漏樓層 XXX`／`已補垂直空缺樓層 PATCH_Vxx`
 - `位移修補：已水平對齊參考樓層`
 - `相鄰水平修補：已水平對齊下層`
 - `垂直重疊修補：已上移對齊下層`
 - `位移修補：已垂直對齊鄰層`
+- `地形貼地修補`（位移模式勾選地形貼地時）
+
+#### 寫回後狀態變化
+成功寫回外部資料庫後，前端會對已寫回列清除 `isFixed` 與 `fixMessages`（見第 9 節）。因此寫回成功的資料會從 `已修復` 變回 `正常`（若仍無異常），「資料寫回」按鈕也會在沒有剩餘已修復列時隱藏。
 
 ## 3. 狀態判斷流程
 
@@ -204,11 +214,16 @@ flowchart TD
     backendParse --> backendDetect[後端 DetectAbnormalIssues]
     backendDetect --> clientLoad[前端 loadDataToMap]
     clientLoad --> terrainDetect[前端 detectTerrainAbnormal]
-    terrainDetect --> uiCategory[前端 getBuildingCategory 顯示狀態]
+    terrainDetect --> uiCategory[前端列表顯示狀態]
     uiCategory --> repairDialog[使用者開啟資料修復]
     repairDialog --> applyRepair[前端 applyBuildingRepair]
     applyRepair --> terrainRecheck[修復後再次 detectTerrainAbnormal]
     terrainRecheck --> rerender[更新列表與 3D 圖台]
+    rerender --> writeBackBtn{存在已修復列?}
+    writeBackBtn -->|是| writeBackDialog[開啟資料寫回]
+    writeBackDialog --> writeBackApi[POST /api/building/write-back]
+    writeBackApi --> clearFixed[成功則清除 isFixed]
+    clearFixed --> rerender
 ```
 
 ### 3.1 異常檢測閾值同步
@@ -223,17 +238,18 @@ flowchart TD
 ## 4. 資料修復邏輯
 
 ### 4.1 修復入口與執行位置
-目前修復流程主要在前端執行，沒有獨立的後端修復 API。
+目前**互動式修復**流程主要在前端執行，沒有獨立的後端修復 API。修復完成後若需持久化，另走「資料寫回」（第 9 節）由後端代理呼叫外部 ConsistsOfBuildingParts API。
 
 需注意：CityDoctor2 的 CityGML 拓撲預處理雖然發生在後端匯入前段，但其定位是 **匯入前幾何清理**，不是取代既有前端互動修復。匯入完成後，仍沿用原本的垂直異常檢測、地形複檢與互動畫面修復。
 
 執行路徑如下：
 
-1. 使用者在 `BuildingCheckDialog.vue` 開啟 `DataRepairDialog.vue`
+1. 使用者在 `BuildingCheckDialog.vue` 開啟 `DataRepairDialog.vue`（僅當存在異常樓層時顯示「資料修復」按鈕）
 2. `DataRepairDialog.vue` 組出 `RepairRequest`
 3. `BuildingDemo.vue` 的 `handleRepairBuildings()` 呼叫 `applyBuildingRepair()`
 4. 修復完成後重新執行 `detectTerrainAbnormal()`
 5. 重新渲染圖台與列表，並顯示修復摘要
+6. （可選）若出現「已修復」列，可再開啟「資料寫回」寫入外部資料庫
 
 ### 4.2 修復對象
 `DataRepairDialog.vue` 目前只會列出 `isAbnormal === true` 的資料：
@@ -496,7 +512,145 @@ flowchart TD
 只要 `isFixed = true` 且 `isAbnormal = false`，畫面就會顯示為 `已修復`。若資料曾經被自動補值或幾何補強，即使原先存在錯誤，也可能直接歸類為 `已修復`。
 
 ### 8.6 修復後仍可能回到異常
-修復完成後會再次進行地形異常檢測（`detectTerrainAbnormal`），因此原本已修復的資料仍可能因地形落差被重新標記為 `異常`。
+修復完成後會再次進行地形異常檢測（`detectTerrainAbnormal`），因此原本已修復的資料仍可能因地形落差被重新標記為 `異常`。此時「資料寫回」按鈕會隱藏（寫回清單只收 `isFixed && !isAbnormal`），需先再修復後才能寫回。
 
 ### 8.7 修復清單不包含純錯誤資料
 `DataRepairDialog.vue` 只列出 `isAbnormal` 資料，因此僅有 `錯誤` 而非 `異常` 的資料，無法透過目前的資料修復對話框處理。
+
+### 8.8 寫回依賴外部 ModelOfBuilding API
+寫回成功與否取決於 `localhost:240`（或設定檔中的）ConsistsOfBuildingParts API 是否可用，以及 GET／POST／PUT／DELETE 行為是否符合本專案假設。補償還原需要外部支援對應的 GET／DELETE／PUT。
+
+### 8.9 寫回欄位預設值與前端資料範圍
+前端 `BuildingPart` 目前未帶 `gmlid`、建號子號、是否為主要建物、附屬建物類型、面積等欄位；寫回時由後端以預設值或幾何計算補齊（見第 9.4 節）。若來源匯入曾有這些欄位但未保留至前端，寫回結果可能與原始資料庫內容不完全一致。
+
+## 9. 資料寫回資料庫
+
+### 9.1 目的與入口
+將畫面上「已修復」的樓層寫回外部 ModelOfBuilding `ConsistsOfBuildingParts` API，使修復結果持久化到資料庫。
+
+前端入口：
+
+1. `BuildingCheckDialog.vue` 在存在 `isFixed && !isAbnormal` 的樓層時顯示「資料寫回」按鈕
+2. 開啟 `DataWriteBackDialog.vue`，列出可寫回樓層（MID、建號、樓層、修復訊息），支援勾選／全選
+3. 使用者按「執行寫回」→ `BuildingDemo.handleWriteBackBuildings()` → `POST /api/building/write-back`
+
+### 9.2 前端請求與成功後處理
+請求 body 形狀：
+
+```json
+{
+  "items": [
+    {
+      "mid": "...",
+      "oid": "...",
+      "buildingNo": "...",
+      "floor": "...",
+      "coordinates": [[[lon, lat, z], ...], ...],
+      "minHeight": 0,
+      "maxHeight": 3.2,
+      "rowId": "..."
+    }
+  ]
+}
+```
+
+成功時前端會：
+
+- 依回應中的 `newOid` 更新對應列的 `oid`（僅新增列）
+- 清除該列 `isFixed`、`fixMessages`
+- 重新渲染圖台
+
+失敗時以 SweetAlert 顯示後端訊息（含補償結果說明），**不**清除本地 `isFixed`。
+
+### 9.3 後端 API 與設定
+- 本專案端點：`POST /api/Building/write-back`（`BuildingController` → `WriteBackService`）
+- 外部基底 URL 設定於 `appsettings.json`：
+
+```json
+"ModelOfBuildingApi": {
+  "ConsistsOfBuildingPartsUrl": "http://localhost:240/api/ConsistsOfBuildingParts"
+}
+```
+
+對外部 API 的呼叫方式：
+
+| 操作 | HTTP | URL |
+| --- | --- | --- |
+| 新增 | `POST` | `{ConsistsOfBuildingPartsUrl}` |
+| 更新 | `PUT` | `{ConsistsOfBuildingPartsUrl}/{OID}` |
+| 寫入前備份（更新） | `GET` | `{ConsistsOfBuildingPartsUrl}/{OID}` |
+| 新增前重複檢查 | `GET` | `{ConsistsOfBuildingPartsUrl}/?MID={MID}` |
+| 補償刪除（新增） | `DELETE` | `{ConsistsOfBuildingPartsUrl}/{newOid}` |
+
+### 9.4 新增與更新判定
+`WriteBackService` 依前端送來的 `oid` 決定：
+
+| 條件 | 動作 |
+| --- | --- |
+| `oid` 以 `PATCH_` 開頭，或無法解析為正整數 | **新增（POST）**；對應缺漏樓層補齊產生的樓層 |
+| `oid` 可解析為正整數 | **更新（PUT）**；路徑與 body 的 `OID` 皆為該值 |
+
+這與第 5.6 節補層 `OID = PATCH_建號_樓層_xxxx` 的設計對齊。
+
+### 9.5 Payload 欄位組裝
+外部 body 對齊 ConsistsOfBuildingPart 欄位（中文屬性名；序列化時不套用 camelCase）：
+
+| 欄位 | 來源 |
+| --- | --- |
+| `OID` | 更新時寫入；新增時省略 |
+| `MID` | 解析前端 `mid` 為整數（失敗則整批 400） |
+| `gmlid` | 前端有給則沿用；否則 `"id" + 層次`（例：層次 `002` → `id002`） |
+| `建號母號` | `buildingNo` |
+| `建號子號` | 預設 `"000"` |
+| `是否為主要建物` | 預設 `"true"` |
+| `附屬建物類型` | 預設 `"No"` |
+| `高度` | `maxHeight - minHeight`（或前端有給的 Height） |
+| `面積` | 前端有給則沿用；否則由 footprint 計算（m²，小數 3 位） |
+| `層次` | `floor` |
+| `boundedBy` | `coordinates` 的 JSON 字串 |
+
+**面積計算**：在多面幾何中選 Z 跨距最小且平面面積最大的環作為 footprint，經緯度以 equirectangular 轉局部公尺後用 Shoelace 公式求面積。無法計算則該筆映射失敗，整批不寫入。
+
+### 9.6 新增前重複檢查
+僅對 **Insert** 項執行。寫入前呼叫 `GET .../?MID={MID}`，若既有資料與待新增項在以下五欄皆相同，則回 **400** 並中止整批（尚未寫入，無需補償）：
+
+- `MID`
+- `建號母號`
+- `是否為主要建物`
+- `附屬建物類型`
+- `層次`
+
+查詢失敗則回 502，同樣不寫入。Update 不受此檢查影響。
+
+### 9.7 補償式交易（失敗復原）
+因外部為逐筆 HTTP API，本專案以補償模擬交易：
+
+```mermaid
+flowchart TD
+  validate[驗證並映射全部項目]
+  dupCheck[Insert: GET by MID 重複檢查]
+  backup[Update: GET 備份原文]
+  write[依序 POST 或 PUT]
+  ok{全部成功?}
+  compensate[反向補償: DELETE 新增 / PUT 還原備份]
+  success[回傳成功與新 OID]
+  fail[回傳錯誤與補償結果]
+  validate --> dupCheck --> backup --> write --> ok
+  ok -->|是| success
+  ok -->|否| compensate --> fail
+```
+
+1. 驗證／映射任一失敗 → 400，不寫入
+2. Insert 重複或 MID 查詢失敗 → 400／502，不寫入
+3. Update 備份 GET 失敗 → 502，不寫入
+4. 寫入過程任一 POST／PUT 失敗 → 對已成功項做補償後回 502
+5. 全部成功 → 200，含 `results`（`rowId`、`originalOid`、`newOid`、`isInsert`）
+
+### 9.8 與修復流程的關係
+
+| 項目 | 資料修復 | 資料寫回 |
+| --- | --- | --- |
+| 執行位置 | 純前端 `buildingRepair.ts` | 前端觸發，後端代理外部 API |
+| 清單條件 | `isAbnormal` | `isFixed && !isAbnormal` |
+| 對本地狀態 | 設 `isFixed = true` | 成功後清 `isFixed` |
+| 對資料庫 | 不寫入 | POST／PUT 至 ConsistsOfBuildingParts |
